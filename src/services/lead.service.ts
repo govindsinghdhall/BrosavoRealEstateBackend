@@ -7,6 +7,7 @@ import { Property } from '../models/Property'
 import { User } from '../models/User'
 import { Booking } from '../models/Booking'
 import { SiteVisit } from '../models/SiteVisit'
+import { LeadProperty } from '../models/LeadProperty'
 import { NotFoundError } from '../utils/errors'
 import { activeOrgFilter } from '../utils/pagination'
 
@@ -71,12 +72,16 @@ export async function serializeLead(lead: ILead, options?: { detail?: boolean })
 
   if (!options?.detail) return base
 
-  const [notes, timeline, notesCount, siteVisitsCount, bookingsCount] = await Promise.all([
+  const [notes, timeline, notesCount, siteVisitsCount, bookingsCount, linkedProperties] =
+    await Promise.all([
     LeadNote.find({ leadId: lead._id }).sort({ createdAt: -1 }).lean(),
     LeadTimeline.find({ leadId: lead._id }).sort({ createdAt: -1 }).lean(),
     LeadNote.countDocuments({ leadId: lead._id }),
     SiteVisit.countDocuments({ leadId: lead._id, deletedAt: null }),
     Booking.countDocuments({ leadId: lead._id, deletedAt: null }),
+    LeadProperty.find({ leadId: lead._id, organizationId: lead.organizationId, deletedAt: null })
+      .sort({ isPrimary: -1, matchScore: -1, createdAt: -1 })
+      .lean(),
   ])
 
   const noteUsers = await User.find({
@@ -88,6 +93,12 @@ export async function serializeLead(lead: ILead, options?: { detail?: boolean })
     _id: { $in: timeline.map((entry) => entry.performedById).filter(Boolean) as number[] },
   }).lean()
   const timelineUserMap = Object.fromEntries(timelineUsers.map((user) => [user._id, user]))
+
+  const linkedPropertyIds = linkedProperties.map((entry) => entry.propertyId)
+  const linkedPropertyDocs = linkedPropertyIds.length
+    ? await Property.find({ _id: { $in: linkedPropertyIds }, deletedAt: null }).lean()
+    : []
+  const linkedPropertyMap = Object.fromEntries(linkedPropertyDocs.map((item) => [item._id, item]))
 
   return {
     ...base,
@@ -117,6 +128,27 @@ export async function serializeLead(lead: ILead, options?: { detail?: boolean })
             lastName: timelineUserMap[entry.performedById].lastName,
           }
         : undefined,
+    })),
+    linkedProperties: linkedProperties.map((entry) => ({
+      id: entry._id,
+      propertyId: entry.propertyId,
+      isPrimary: entry.isPrimary,
+      interestLevel: entry.interestLevel,
+      matchScore: entry.matchScore,
+      notes: entry.notes,
+      property: linkedPropertyMap[entry.propertyId]
+        ? {
+            id: linkedPropertyMap[entry.propertyId]._id,
+            title: linkedPropertyMap[entry.propertyId].title,
+            type: linkedPropertyMap[entry.propertyId].type,
+            status: linkedPropertyMap[entry.propertyId].status,
+            price: linkedPropertyMap[entry.propertyId].price,
+            city: linkedPropertyMap[entry.propertyId].city,
+            locality: linkedPropertyMap[entry.propertyId].locality,
+            bedrooms: linkedPropertyMap[entry.propertyId].bedrooms,
+          }
+        : undefined,
+      createdAt: entry.createdAt.toISOString(),
     })),
     _count: {
       notes: notesCount,
@@ -234,6 +266,19 @@ export async function updateLead(
       description: `Status changed from ${previousStatus} to ${updates.status}`,
       performedById,
       metadata: { from: previousStatus, to: updates.status },
+    })
+  }
+
+  if (updates.propertyId !== undefined && updates.propertyId !== existing.propertyId) {
+    await addLeadTimelineEntry({
+      organizationId,
+      leadId,
+      action: 'PROPERTY_INTEREST_UPDATED',
+      description: updates.propertyId
+        ? 'Primary property interest updated'
+        : 'Primary property interest cleared',
+      performedById,
+      metadata: { propertyId: updates.propertyId },
     })
   }
 

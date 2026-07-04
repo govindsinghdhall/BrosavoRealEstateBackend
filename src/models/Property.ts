@@ -39,6 +39,11 @@ export interface IProperty extends Document<number> {
   brochureUrl: string | null
   amenities: string[]
   isActive: boolean
+  ownerName: string | null
+  ownerPhone: string | null
+  ownerEmail: string | null
+  ownerAddress: string | null
+  ownerNotes: string | null
   deletedAt: Date | null
   createdAt: Date
   updatedAt: Date
@@ -84,6 +89,11 @@ const propertySchema = new Schema<IProperty>(
     brochureUrl: { type: String, default: null },
     amenities: { type: [String], default: [] },
     isActive: { type: Boolean, default: true },
+    ownerName: { type: String, default: null, trim: true },
+    ownerPhone: { type: String, default: null, trim: true },
+    ownerEmail: { type: String, default: null, lowercase: true, trim: true },
+    ownerAddress: { type: String, default: null, trim: true },
+    ownerNotes: { type: String, default: null, trim: true },
     deletedAt: { type: Date, default: null },
   },
   { timestamps: true },

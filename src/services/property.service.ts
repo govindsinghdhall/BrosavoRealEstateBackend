@@ -45,6 +45,11 @@ export function serializeProperty(property: IProperty) {
     brochureUrl: property.brochureUrl,
     amenities: property.amenities,
     isActive: property.isActive,
+    ownerName: property.ownerName,
+    ownerPhone: property.ownerPhone,
+    ownerEmail: property.ownerEmail,
+    ownerAddress: property.ownerAddress,
+    ownerNotes: property.ownerNotes,
     createdAt: property.createdAt.toISOString(),
     updatedAt: property.updatedAt.toISOString(),
   }

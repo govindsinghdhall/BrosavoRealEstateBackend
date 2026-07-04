@@ -9,6 +9,7 @@ import {
   serializeProperty,
   updateProperty,
 } from '../services/property.service'
+import { listPropertiesWithOwners } from '../services/leadProperty.service'
 import { buildPaginationMeta, success, successPaginated } from '../utils/response'
 import { AppError } from '../utils/errors'
 
@@ -60,6 +61,11 @@ const propertyBodySchema = z.object({
   brochureUrl: z.string().nullable().optional(),
   amenities: z.array(z.string()).optional(),
   isActive: z.boolean().optional(),
+  ownerName: z.string().nullable().optional(),
+  ownerPhone: z.string().nullable().optional(),
+  ownerEmail: z.string().email().nullable().optional().or(z.literal('')),
+  ownerAddress: z.string().nullable().optional(),
+  ownerNotes: z.string().nullable().optional(),
 })
 
 function normalizePayload(payload: z.infer<typeof propertyBodySchema>) {
@@ -183,6 +189,28 @@ export async function deleteOrganizationProperty(req: Request, res: Response, ne
 
     await deleteProperty(paramId(req.params.id), req.auth.organizationId)
     return success(res, null, 'Property deleted')
+  } catch (error) {
+    next(error)
+  }
+}
+
+export async function listPropertyOwners(req: Request, res: Response, next: NextFunction) {
+  try {
+    if (!req.auth) {
+      return res.status(401).json({ success: false, message: 'Unauthorized' })
+    }
+
+    const page = Math.max(1, Number(req.query.page) || 1)
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 50))
+    const search = typeof req.query.search === 'string' ? req.query.search : undefined
+
+    const { properties, total } = await listPropertiesWithOwners(req.auth.organizationId, {
+      page,
+      limit,
+      search,
+    })
+
+    return successPaginated(res, properties, buildPaginationMeta(page, limit, total))
   } catch (error) {
     next(error)
   }

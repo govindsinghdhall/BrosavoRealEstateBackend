@@ -12,6 +12,11 @@ router.get(
   requirePermission(PERMISSIONS.PROPERTIES_READ),
   propertiesController.getPropertyInventory,
 )
+router.get(
+  '/owners',
+  requirePermission(PERMISSIONS.PROPERTIES_READ),
+  propertiesController.listPropertyOwners,
+)
 router.get('/', requirePermission(PERMISSIONS.PROPERTIES_READ), propertiesController.listOrganizationProperties)
 router.post(
   '/',

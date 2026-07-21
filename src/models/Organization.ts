@@ -5,6 +5,11 @@ export interface OrganizationSettings {
   faviconUrl?: string
   tagline?: string
   websiteApiKey?: string
+  whatsapp?: {
+    businessPhone?: string
+    businessId?: string
+    displayName?: string
+  }
 }
 
 export interface IOrganization extends Document<number> {
@@ -35,6 +40,11 @@ const organizationSchema = new Schema<IOrganization>(
           faviconUrl: String,
           tagline: String,
           websiteApiKey: String,
+          whatsapp: {
+            businessPhone: String,
+            businessId: String,
+            displayName: String,
+          },
         },
         { _id: false },
       ),

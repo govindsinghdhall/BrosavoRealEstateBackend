@@ -3,6 +3,7 @@ import authRoutes from './auth.routes'
 import usersRoutes from './users.routes'
 import rolesRoutes from './roles.routes'
 import organizationsRoutes from './organizations.routes'
+import whatsappRoutes from './whatsapp.routes'
 import propertiesRoutes from './properties.routes'
 import leadsRoutes from './leads.routes'
 import contactsRoutes from './contacts.routes'
@@ -23,6 +24,7 @@ router.use('/auth', authRoutes)
 router.use('/users', usersRoutes)
 router.use('/roles', rolesRoutes)
 router.use('/organizations', organizationsRoutes)
+router.use('/whatsapp', whatsappRoutes)
 router.use('/properties', propertiesRoutes)
 router.use('/leads', leadsRoutes)
 router.use('/contacts', contactsRoutes)

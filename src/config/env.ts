@@ -10,6 +10,10 @@ const envSchema = z.object({
   JWT_SECRET: z.string().min(16, 'JWT_SECRET must be at least 16 characters'),
   JWT_EXPIRES_IN: z.string().default('7d'),
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
+  WHATSAPP_API_BASE_URL: z.string().default('https://graph.facebook.com'),
+  WHATSAPP_GRAPH_API_VERSION: z.string().default('v17.0'),
+  WHATSAPP_PHONE_NUMBER_ID: z.string().optional(),
+           WHATSAPP_ACCESS_TOKEN: z.string().optional(),
 })
 
 const parsed = envSchema.safeParse(process.env)

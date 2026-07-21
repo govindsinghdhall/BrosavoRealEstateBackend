@@ -18,6 +18,13 @@ const updateOrganizationSchema = z.object({
     .object({
       faviconUrl: z.string().optional(),
       tagline: z.string().optional(),
+      whatsapp: z
+        .object({
+          businessPhone: z.string().trim().optional(),
+          businessId: z.string().trim().optional(),
+          displayName: z.string().trim().optional(),
+        })
+        .optional(),
     })
     .nullable()
     .optional(),

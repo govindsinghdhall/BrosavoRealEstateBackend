@@ -2,7 +2,7 @@ import { DEFAULT_ROLES, ROLE_PERMISSIONS } from '../constants/permissions'
 import { LeadSource } from '../models/LeadSource'
 import { Organization, type IOrganization } from '../models/Organization'
 import { Role } from '../models/Role'
-import { organizationNameFromSignup, slugify } from '../utils/slug'
+import { slugify } from '../utils/slug'
 
 const DEFAULT_LEAD_SOURCES = [
   { name: 'Website', type: 'WEBSITE' },
@@ -26,12 +26,11 @@ async function generateUniqueSlug(baseName: string): Promise<string> {
 }
 
 export async function createOrganizationForSignup(input: {
-  firstName: string
-  lastName: string
+  organizationName: string
   email: string
   phone?: string
 }): Promise<IOrganization> {
-  const name = organizationNameFromSignup(input.firstName, input.lastName, input.email)
+  const name = input.organizationName.trim()
   const slug = await generateUniqueSlug(name)
 
   const organization = await Organization.create({

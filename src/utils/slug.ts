@@ -6,11 +6,3 @@ export function slugify(value: string): string {
     .replace(/^-+|-+$/g, '')
     .slice(0, 48)
 }
-
-export function organizationNameFromSignup(firstName: string, lastName: string, email: string): string {
-  const fullName = `${firstName} ${lastName}`.trim()
-  if (fullName) return `${fullName}'s Organization`
-
-  const localPart = email.split('@')[0]
-  return `${localPart}'s Organization`
-}

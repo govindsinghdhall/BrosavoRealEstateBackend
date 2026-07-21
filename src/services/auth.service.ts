@@ -13,6 +13,7 @@ import { signAccessToken } from '../utils/jwt'
 import { AppError, ConflictError, UnauthorizedError } from '../utils/errors'
 
 export interface RegisterInput {
+  organizationName: string
   firstName: string
   lastName: string
   email: string
@@ -34,8 +35,7 @@ export async function registerUser(input: RegisterInput) {
   }
 
   let organization = await createOrganizationForSignup({
-    firstName: input.firstName,
-    lastName: input.lastName,
+    organizationName: input.organizationName,
     email,
     phone: input.phone,
   })

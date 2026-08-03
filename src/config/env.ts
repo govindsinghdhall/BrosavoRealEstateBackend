@@ -13,7 +13,12 @@ const envSchema = z.object({
   WHATSAPP_API_BASE_URL: z.string().default('https://graph.facebook.com'),
   WHATSAPP_GRAPH_API_VERSION: z.string().default('v17.0'),
   WHATSAPP_PHONE_NUMBER_ID: z.string().optional(),
-           WHATSAPP_ACCESS_TOKEN: z.string().optional(),
+  WHATSAPP_ACCESS_TOKEN: z.string().optional(),
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+  GOOGLE_REDIRECT_URI: z.string().optional(),
+  FRONTEND_URL: z.string().default('http://localhost:5173'),
+  MARKETING_UPLOAD_DIR: z.string().default('uploads/marketing'),
 })
 
 const parsed = envSchema.safeParse(process.env)

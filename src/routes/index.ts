@@ -13,6 +13,7 @@ import leadSourcesRoutes from './leadSources.routes'
 import propertyLookupsRoutes from './propertyLookups.routes'
 import reportsRoutes from './reports.routes'
 import publicRoutes from './public.routes'
+import marketingRoutes from './marketing.routes'
 
 const router = Router()
 
@@ -33,6 +34,7 @@ router.use('/bookings', bookingsRoutes)
 router.use('/lead-sources', leadSourcesRoutes)
 router.use('/property-lookups', propertyLookupsRoutes)
 router.use('/reports', reportsRoutes)
+router.use('/marketing', marketingRoutes)
 router.use('/public', publicRoutes)
 
 export default router

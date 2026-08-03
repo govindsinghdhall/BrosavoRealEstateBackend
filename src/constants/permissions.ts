@@ -26,6 +26,9 @@ export const PERMISSIONS = {
   REPORTS_READ: 'reports.read',
   ORGANIZATION_READ: 'organization.read',
   ORGANIZATION_UPDATE: 'organization.update',
+  MARKETING_READ: 'marketing.read',
+  MARKETING_MANAGE: 'marketing.manage',
+  MARKETING_REPLY: 'marketing.reply',
 } as const
 
 export type Permission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS]
@@ -55,6 +58,8 @@ export const ROLE_PERMISSIONS: Record<string, Permission[]> = {
     PERMISSIONS.USERS_READ,
     PERMISSIONS.REPORTS_READ,
     PERMISSIONS.ORGANIZATION_READ,
+    PERMISSIONS.MARKETING_READ,
+    PERMISSIONS.MARKETING_REPLY,
   ],
   agent: [
     PERMISSIONS.LEADS_READ,
@@ -68,6 +73,7 @@ export const ROLE_PERMISSIONS: Record<string, Permission[]> = {
     PERMISSIONS.BOOKINGS_READ,
     PERMISSIONS.BOOKINGS_CREATE,
     PERMISSIONS.ORGANIZATION_READ,
+    PERMISSIONS.MARKETING_READ,
   ],
   viewer: [
     PERMISSIONS.LEADS_READ,
@@ -77,6 +83,7 @@ export const ROLE_PERMISSIONS: Record<string, Permission[]> = {
     PERMISSIONS.BOOKINGS_READ,
     PERMISSIONS.REPORTS_READ,
     PERMISSIONS.ORGANIZATION_READ,
+    PERMISSIONS.MARKETING_READ,
   ],
 }
 

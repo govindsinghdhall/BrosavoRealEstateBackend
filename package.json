@@ -14,7 +14,12 @@
     "seed": "tsx src/scripts/seed.ts",
     "typecheck": "tsc --noEmit"
   },
-  "keywords": ["realestate", "crm", "saas", "mongodb"],
+  "keywords": [
+    "realestate",
+    "crm",
+    "saas",
+    "mongodb"
+  ],
   "license": "MIT",
   "dependencies": {
     "bcryptjs": "^3.0.2",
@@ -26,6 +31,7 @@
     "mongoose": "^8.16.0",
     "morgan": "^1.10.0",
     "multer": "^2.0.2",
+    "node-cron": "^4.6.0",
     "typescript": "^5.8.3",
     "xlsx": "^0.18.5",
     "zod": "^3.25.67"
@@ -38,6 +44,7 @@
     "@types/morgan": "^1.9.10",
     "@types/multer": "^2.0.0",
     "@types/node": "^24.0.4",
+    "@types/node-cron": "^3.0.11",
     "tsx": "^4.20.3"
   }
 }

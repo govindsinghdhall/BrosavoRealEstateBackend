@@ -17,3 +17,9 @@ services:
         sync: false
       - key: CORS_ORIGIN
         sync: false
+      - key: API_BASE_URL
+        value: https://brisavorealestatebackend-1.onrender.com
+      - key: GOOGLE_REDIRECT_URI
+        value: https://brisavorealestatebackend-1.onrender.com/api/v1/marketing/google/callback
+      - key: FRONTEND_URL
+        value: https://crm.durgaproperty.com

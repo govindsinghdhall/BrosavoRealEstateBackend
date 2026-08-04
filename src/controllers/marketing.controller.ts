@@ -13,7 +13,7 @@ import { CONTENT_TYPES, CONTENT_STATUSES } from '../models/MarketingContent'
 import { CAMPAIGN_STATUSES } from '../models/MarketingCampaign'
 import { AI_TONES } from '../models/MarketingSettings'
 import { MARKETING_PROVIDERS } from '../models/MarketingProviderAccount'
-import { env } from '../config/env'
+import { getFrontendOrigin } from '../config/urls'
 
 function requireAuth(req: Request) {
   if (!req.auth) throw new UnauthorizedError()
@@ -47,7 +47,7 @@ export async function googleCallback(req: Request, res: Response, next: NextFunc
     return res.redirect(result.redirectUrl)
   } catch (error) {
     const message = error instanceof Error ? encodeURIComponent(error.message) : 'oauth_failed'
-    return res.redirect(`${env.FRONTEND_URL}/marketing?google=error&message=${message}`)
+    return res.redirect(`${getFrontendOrigin()}/marketing?google=error&message=${message}`)
   }
 }
 

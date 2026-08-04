@@ -1,6 +1,6 @@
 import { signAccessToken, verifyAccessToken } from '../../utils/jwt'
 import { AppError } from '../../utils/errors'
-import { env } from '../../config/env'
+import { getFrontendOrigin } from '../../config/urls'
 import { GoogleBusinessClient } from '../../integrations/googleBusiness.client'
 import { MarketingRepository } from '../../repositories/marketing.repository'
 import { logMarketingActivity } from './activityLog.service'
@@ -67,7 +67,7 @@ export class GoogleOAuthService {
         isConnected: account.isConnected,
         locationId: account.locationId,
       },
-      redirectUrl: `${env.FRONTEND_URL}/marketing?google=connected`,
+      redirectUrl: `${getFrontendOrigin()}/marketing?google=connected`,
     }
   }
 

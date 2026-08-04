@@ -17,6 +17,8 @@ const envSchema = z.object({
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GOOGLE_REDIRECT_URI: z.string().optional(),
+  /** Public backend URL (e.g. https://your-api.onrender.com). Avoids localhost:PORT on Render. */
+  API_BASE_URL: z.string().optional(),
   FRONTEND_URL: z.string().default('http://localhost:5173'),
   MARKETING_UPLOAD_DIR: z.string().default('uploads/marketing'),
 })

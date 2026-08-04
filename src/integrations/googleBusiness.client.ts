@@ -20,6 +20,9 @@ export interface GoogleReviewPayload {
   replyDate?: Date | null
 }
 
+const DEFAULT_GOOGLE_REDIRECT_URI =
+  'https://brisavorealestatebackend-1.onrender.com/api/v1/marketing/google/callback'
+
 /** Thin Google Business Profile client. Uses live OAuth when configured; otherwise safe stubs. */
 export class GoogleBusinessClient {
   static isConfigured() {
@@ -27,10 +30,7 @@ export class GoogleBusinessClient {
   }
 
   static getRedirectUri() {
-    return (
-      env.GOOGLE_REDIRECT_URI ||
-      `http://localhost:${env.PORT}/api/v1/marketing/google/callback`
-    )
+    return env.GOOGLE_REDIRECT_URI || DEFAULT_GOOGLE_REDIRECT_URI
   }
 
   static buildAuthUrl(state: string) {

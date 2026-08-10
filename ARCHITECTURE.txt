@@ -1,0 +1,511 @@
+================================================================================
+  REALESTATE BACKEND — ARCHITECTURE OVERVIEW
+  Project : Brisavo RealEstate CRM API
+  Stack   : Node.js 20+ | Express 5 | TypeScript | MongoDB (Mongoose)
+  Hosting : Render (https://brisavorealestatebackend-1.onrender.com)
+================================================================================
+
+1. HIGH-LEVEL SYSTEM
+--------------------------------------------------------------------------------
+
+  ┌──────────────────────┐       ┌──────────────────────┐
+  │  CRM Admin (React)   │       │  Public Website      │
+  │  crm.durgaproperty   │       │  (listings / leads)  │
+  │  JWT auth            │       │  Public / API key    │
+  └──────────┬───────────┘       └──────────┬───────────┘
+             │                              │
+             │  /api/v1/*                   │  /api/v1/public/*
+             ▼                              ▼
+  ┌─────────────────────────────────────────────────────┐
+  │              RealEstate Backend (Render)            │
+  │         Express + TypeScript + Mongoose             │
+  │                                                     │
+  │  Auth │ CRM │ WhatsApp │ Marketing │ Public │ Reports│
+  └───────────────────────┬─────────────────────────────┘
+                          │
+          ┌───────────────┼───────────────┐
+          ▼               ▼               ▼
+     ┌─────────┐   ┌────────────┐  ┌─────────────────┐
+     │ MongoDB │   │ Meta       │  │ Google Business │
+     │ (Atlas  │   │ WhatsApp   │  │ Profile OAuth   │
+     │ or local)│   │ Cloud API  │  │                 │
+     └─────────┘   └────────────┘  └─────────────────┘
+
+
+2. MULTI-TENANT SaaS MODEL
+--------------------------------------------------------------------------------
+
+  Every signup creates a NEW ORGANIZATION (tenant).
+
+  Flow:
+    1. POST /api/v1/auth/register
+       Body: organizationName, firstName, lastName, email, password, phone?
+    2. Backend creates Organization + unique slug
+    3. Seeds default roles: admin, manager, agent, viewer
+    4. Seeds default lead sources: Website, Walk-in, Referral, Social, Phone
+    5. Signing-up user becomes org ADMIN
+    6. JWT includes: userId, organizationId, roleId, email
+    7. ALL subsequent queries are scoped by organizationId
+
+  Isolation rule:
+    - Every document stores organizationId
+    - Auth middleware attaches req.auth
+    - Services always filter by req.auth.organizationId
+
+
+3. REQUEST LIFECYCLE
+--------------------------------------------------------------------------------
+
+  Client Request
+       │
+       ▼
+  Helmet / CORS / Morgan / JSON body parser
+       │
+       ▼
+  Router (/api/v1/...)
+       │
+       ├── Public routes (auth/register, auth/login, public/*, marketing/google/callback)
+       │
+       └── Protected routes
+             │
+             ├── authenticate()     → verify JWT, set req.auth
+             ├── requirePermission()→ check role permissions
+             ├── Zod validate       → request body/query
+             ▼
+           Controller  →  Service  →  Model / Repository
+             │
+             ▼
+           success() / successPaginated() / AppError → errorHandler
+
+
+4. PROJECT STRUCTURE (folders + file names)
+--------------------------------------------------------------------------------
+
+  --- KEY FOLDERS (requested) -----------------------------------------------
+
+  src/routes/
+  ├── index.ts
+  ├── auth.routes.ts
+  ├── users.routes.ts
+  ├── roles.routes.ts
+  ├── organizations.routes.ts
+  ├── leads.routes.ts
+  ├── leadSources.routes.ts
+  ├── contacts.routes.ts
+  ├── properties.routes.ts
+  ├── propertyLookups.routes.ts
+  ├── siteVisits.routes.ts
+  ├── bookings.routes.ts
+  ├── reports.routes.ts
+  ├── public.routes.ts
+  ├── marketing.routes.ts
+  └── whatsapp.routes.ts
+
+  src/controllers/
+  ├── auth.controller.ts
+  ├── users.controller.ts
+  ├── organizations.controller.ts
+  ├── leads.controller.ts
+  ├── leadSources.controller.ts
+  ├── contacts.controller.ts
+  ├── properties.controller.ts
+  ├── propertyLookups.controller.ts
+  ├── siteVisits.controller.ts
+  ├── bookings.controller.ts
+  ├── reports.controller.ts
+  ├── public.controller.ts
+  ├── marketing.controller.ts
+  ├── whatsapp.controller.ts
+  ├── WhatsAppController.ts
+  └── WebhookController.ts
+
+  src/utils/
+  ├── autoIncrement.ts
+  ├── encryption.ts
+  ├── errors.ts
+  ├── jwt.ts
+  ├── logger.ts
+  ├── pagination.ts
+  ├── password.ts
+  ├── response.ts
+  └── slug.ts
+
+  --- FULL TREE -------------------------------------------------------------
+
+  RealEstateBackend/
+  ├── src/
+  │   ├── config/
+  │   │   ├── cors.ts
+  │   │   ├── database.ts
+  │   │   ├── env.ts
+  │   │   ├── publicSite.ts
+  │   │   └── urls.ts
+  │   ├── constants/
+  │   │   └── permissions.ts
+  │   ├── controllers/
+  │   │   ├── auth.controller.ts
+  │   │   ├── bookings.controller.ts
+  │   │   ├── contacts.controller.ts
+  │   │   ├── leads.controller.ts
+  │   │   ├── leadSources.controller.ts
+  │   │   ├── marketing.controller.ts
+  │   │   ├── organizations.controller.ts
+  │   │   ├── properties.controller.ts
+  │   │   ├── propertyLookups.controller.ts
+  │   │   ├── public.controller.ts
+  │   │   ├── reports.controller.ts
+  │   │   ├── siteVisits.controller.ts
+  │   │   ├── users.controller.ts
+  │   │   ├── WebhookController.ts
+  │   │   ├── whatsapp.controller.ts
+  │   │   └── WhatsAppController.ts
+  │   ├── cron/
+  │   │   ├── marketing.cron.ts
+  │   │   └── whatsapp.cron.ts
+  │   ├── integrations/
+  │   │   └── googleBusiness.client.ts
+  │   ├── middleware/
+  │   │   ├── auth.ts
+  │   │   ├── errorHandler.ts
+  │   │   ├── upload.ts
+  │   │   └── validate.ts
+  │   ├── models/
+  │   │   ├── Booking.ts
+  │   │   ├── Contact.ts
+  │   │   ├── Counter.ts
+  │   │   ├── GoogleReview.ts
+  │   │   ├── index.ts
+  │   │   ├── Lead.ts
+  │   │   ├── LeadNote.ts
+  │   │   ├── LeadProperty.ts
+  │   │   ├── LeadSource.ts
+  │   │   ├── LeadTimeline.ts
+  │   │   ├── MarketingActivityLog.ts
+  │   │   ├── MarketingAiReply.ts
+  │   │   ├── MarketingCampaign.ts
+  │   │   ├── MarketingContent.ts
+  │   │   ├── MarketingProviderAccount.ts
+  │   │   ├── MarketingSettings.ts
+  │   │   ├── Organization.ts
+  │   │   ├── Property.ts
+  │   │   ├── PropertyLookup.ts
+  │   │   ├── Role.ts
+  │   │   ├── SiteVisit.ts
+  │   │   ├── User.ts
+  │   │   ├── WhatsAppAccount.ts
+  │   │   ├── WhatsAppCampaign.ts
+  │   │   ├── WhatsAppCampaignRecipient.ts
+  │   │   ├── WhatsAppConversation.ts
+  │   │   ├── WhatsAppMessage.ts
+  │   │   ├── WhatsAppMetaTemplate.ts
+  │   │   ├── WhatsAppTemplate.ts
+  │   │   └── WhatsAppWebhookLog.ts
+  │   ├── repositories/
+  │   │   └── marketing.repository.ts
+  │   ├── routes/
+  │   │   ├── auth.routes.ts
+  │   │   ├── bookings.routes.ts
+  │   │   ├── contacts.routes.ts
+  │   │   ├── index.ts
+  │   │   ├── leads.routes.ts
+  │   │   ├── leadSources.routes.ts
+  │   │   ├── marketing.routes.ts
+  │   │   ├── organizations.routes.ts
+  │   │   ├── properties.routes.ts
+  │   │   ├── propertyLookups.routes.ts
+  │   │   ├── public.routes.ts
+  │   │   ├── reports.routes.ts
+  │   │   ├── roles.routes.ts
+  │   │   ├── siteVisits.routes.ts
+  │   │   ├── users.routes.ts
+  │   │   └── whatsapp.routes.ts
+  │   ├── scripts/
+  │   │   ├── seed.ts
+  │   │   └── syncRolePermissions.ts
+  │   ├── services/
+  │   │   ├── marketing/
+  │   │   │   ├── activityLog.service.ts
+  │   │   │   ├── analytics.service.ts
+  │   │   │   ├── campaign.service.ts
+  │   │   │   ├── content.service.ts
+  │   │   │   ├── googleOAuth.service.ts
+  │   │   │   └── review.service.ts
+  │   │   ├── auth.service.ts
+  │   │   ├── booking.service.ts
+  │   │   ├── contact-import.service.ts
+  │   │   ├── contact.service.ts
+  │   │   ├── lead.service.ts
+  │   │   ├── leadProperty.service.ts
+  │   │   ├── leadSource.service.ts
+  │   │   ├── organization.service.ts
+  │   │   ├── property.service.ts
+  │   │   ├── propertyLookup.service.ts
+  │   │   ├── propertyMatching.service.ts
+  │   │   ├── public.service.ts
+  │   │   ├── report.service.ts
+  │   │   ├── siteVisit.service.ts
+  │   │   ├── user.service.ts
+  │   │   ├── whatsapp.payload.test.ts
+  │   │   ├── whatsapp.payload.ts
+  │   │   ├── whatsapp.service.ts
+  │   │   └── WhatsAppService.ts
+  │   ├── types/
+  │   │   └── express.d.ts
+  │   ├── utils/
+  │   │   ├── autoIncrement.ts
+  │   │   ├── encryption.ts
+  │   │   ├── errors.ts
+  │   │   ├── jwt.ts
+  │   │   ├── logger.ts
+  │   │   ├── pagination.ts
+  │   │   ├── password.ts
+  │   │   ├── response.ts
+  │   │   └── slug.ts
+  │   ├── app.ts
+  │   └── index.ts
+  ├── .env
+  ├── .env.example
+  ├── .gitignore
+  ├── ARCHITECTURE.txt
+  ├── package-lock.json
+  ├── package.json
+  ├── README.md
+  ├── render.yaml
+  └── tsconfig.json
+
+
+5. API SURFACE (/api/v1)
+--------------------------------------------------------------------------------
+
+  HEALTH
+    GET  /health
+
+  AUTH
+    POST /auth/register            Create org + admin user
+    POST /auth/login               Email/password → JWT
+    POST /auth/logout              Client clears token
+    GET  /auth/me                  Session restore { userId }
+
+  ORGANIZATION / TEAM
+    /organizations/*               Tenant branding & settings
+    /users/*                       Team members (per org)
+    /roles/*                       RBAC roles
+
+  CRM CORE
+    /leads/*                       Lead pipeline + notes + timeline
+    /contacts/*                    Contacts (+ import)
+    /properties/*                  Inventory
+    /property-lookups/*            Lookup values (types, cities, etc.)
+    /lead-sources/*                Lead source master
+    /site-visits/*                 Site visit scheduling
+    /bookings/*                    Bookings
+    /reports/*                     Dashboards / reports
+
+  WHATSAPP
+    GET    /whatsapp/settings
+    PATCH  /whatsapp/settings      Org display settings only
+    GET    /whatsapp/templates
+    POST   /whatsapp/templates
+    PUT    /whatsapp/templates/:id
+    DELETE /whatsapp/templates/:id
+    POST   /whatsapp/send          Sends via GLOBAL Meta credentials
+
+  MARKETING HUB
+    GET  /marketing/google/login          Start Google OAuth (JWT required)
+    GET  /marketing/google/callback       Public OAuth callback (no JWT)
+    POST /marketing/google/disconnect
+    ... reviews / AI reply / content / campaigns / analytics / settings
+
+  PUBLIC WEBSITE
+    /public/*                      Listings + inquiry capture (org-scoped)
+
+
+6. AUTHENTICATION & AUTHORIZATION
+--------------------------------------------------------------------------------
+
+  Auth method : JWT Bearer token
+  Claims      : userId, organizationId, roleId, email
+  Secret      : JWT_SECRET (env)
+  Expiry      : JWT_EXPIRES_IN (default 7d)
+
+  Roles (seeded per org):
+    admin   → all permissions
+    manager → most CRM + marketing read/reply (no full org manage)
+    agent   → leads/contacts/visits/bookings (limited)
+    viewer  → read-only
+
+  Middleware:
+    authenticate(req)            → sets req.auth or 401
+    requirePermission(perm)      → 403 if role lacks permission
+
+
+7. DATA MODEL (MongoDB)
+--------------------------------------------------------------------------------
+
+  TENANT
+    Organization                 Tenant root (slug, branding, settings)
+    Role                         Per-org RBAC
+    User                         Team members (belongs to org + role)
+    Counter                      Auto-increment IDs
+
+  CRM
+    Lead, LeadNote, LeadTimeline, LeadProperty, LeadSource
+    Contact
+    Property, PropertyLookup
+    SiteVisit
+    Booking
+
+  WHATSAPP
+    WhatsAppTemplate             Per-org message templates
+    Organization.settings.whatsapp
+                                 Display metadata (businessPhone, businessId, displayName)
+                                 NOTE: API credentials are GLOBAL env, not per-org
+
+  MARKETING
+    MarketingProviderAccount     Google (and future providers) tokens
+    GoogleReview
+    MarketingAiReply
+    MarketingContent
+    MarketingCampaign
+    MarketingSettings
+    MarketingActivityLog
+
+  Key rule:
+    Almost every collection has organizationId indexed for tenant isolation.
+
+
+8. EXTERNAL INTEGRATIONS
+--------------------------------------------------------------------------------
+
+  A) WhatsApp Cloud API (Meta)
+     Env:
+       WHATSAPP_API_BASE_URL
+       WHATSAPP_GRAPH_API_VERSION
+       WHATSAPP_PHONE_NUMBER_ID      ← global (shared number)
+       WHATSAPP_ACCESS_TOKEN         ← global
+
+     Current design:
+       - Templates & settings are per organization
+       - Sending uses ONE shared Meta phone number / token from env
+       - Per-customer WhatsApp Business accounts are NOT supported yet
+
+  B) Google Business Profile (Marketing Hub)
+     Env:
+       GOOGLE_CLIENT_ID
+       GOOGLE_CLIENT_SECRET
+       GOOGLE_REDIRECT_URI
+         → https://brisavorealestatebackend-1.onrender.com/api/v1/marketing/google/callback
+       API_BASE_URL
+       FRONTEND_URL
+         → https://crm.durgaproperty.com
+
+     OAuth flow:
+       1. CRM calls GET /marketing/google/login (JWT)
+       2. Backend builds Google auth URL with redirect_uri = production callback
+       3. Google redirects to /api/v1/marketing/google/callback?code&state
+       4. Backend exchanges code, stores tokens on MarketingProviderAccount
+       5. Backend redirects browser to FRONTEND_URL/marketing?google=connected
+
+     Important:
+       Never build redirect URIs from localhost:PORT (Render uses PORT=10000
+       internally — that caused ERR_CONNECTION_REFUSED). Use urls.ts helpers.
+
+
+9. RESPONSE ENVELOPE
+--------------------------------------------------------------------------------
+
+  Success:
+    {
+      "success": true,
+      "message": "Login successful",
+      "data": { ... }
+    }
+
+  Paginated:
+    {
+      "success": true,
+      "data": [ ... ],
+      "meta": { page, limit, total, ... }
+    }
+
+  Error:
+    {
+      "success": false,
+      "message": "..."
+    }
+
+
+10. ENVIRONMENT VARIABLES (KEY)
+--------------------------------------------------------------------------------
+
+  NODE_ENV
+  PORT                         Local listen port (Render overrides to 10000)
+  MONGODB_URI
+  JWT_SECRET
+  JWT_EXPIRES_IN
+  CORS_ORIGIN                  Comma-separated frontend origins
+  API_BASE_URL                 Public backend URL (Render)
+  FRONTEND_URL                 CRM frontend origin
+  WHATSAPP_*                   Meta Cloud API
+  GOOGLE_*                     Marketing OAuth
+  PUBLIC_ORGANIZATION_SLUG     Org shown on public website
+  MARKETING_UPLOAD_DIR
+
+
+11. DEPLOYMENT
+--------------------------------------------------------------------------------
+
+  Platform : Render (web service)
+  Config   : render.yaml
+  Build    : npm install && npm run build
+  Start    : npm start  (node dist/index.js)
+  Health   : GET /api/v1/health
+
+  Local Mongo (preferred for this project):
+    From monorepo root:
+      npm run db:up     # docker compose → Mongo :27017 + Mongo Express :8081
+      npm run seed
+
+  Local API:
+    cd RealEstateBackend
+    npm run dev         # typically :3000 or :4000 from .env PORT
+
+
+12. CURRENT CAPABILITY SNAPSHOT
+--------------------------------------------------------------------------------
+
+  READY
+    - Multi-tenant register / login / JWT scoping
+    - Full CRM (leads, contacts, properties, visits, bookings, reports)
+    - Role-based permissions
+    - Public website feed endpoints
+    - WhatsApp templates + send via shared Meta credentials
+    - Marketing Hub Google OAuth + reviews/content/campaigns scaffolding
+
+  NOT READY / LIMITATIONS
+    - Per-organization WhatsApp Business credentials
+      (all orgs share WHATSAPP_PHONE_NUMBER_ID / ACCESS_TOKEN)
+    - Google reviews/content live API still partially stubbed in client
+    - Customer cannot bring their own WhatsApp number without code changes
+
+
+13. ONBOARDING A NEW CUSTOMER (TODAY)
+--------------------------------------------------------------------------------
+
+  CRM:
+    1. Customer registers → new org + admin
+    2. They can use leads/properties/team immediately
+
+  WhatsApp:
+    - Can send only through YOUR shared Meta WhatsApp number
+      (if WHATSAPP_* is set on Render)
+    - Cannot attach customer's own WhatsApp Business account yet
+
+  Marketing / Google:
+    - Customer connects Google via OAuth in Marketing Hub
+    - Requires GOOGLE_* env + correct redirect URI in Google Cloud Console
+
+
+================================================================================
+  End of architecture document
+================================================================================

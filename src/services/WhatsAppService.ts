@@ -190,19 +190,65 @@ export class WhatsAppService {
 
 async completeEmbeddedSignup(
   organizationId: number,
-  oauthUserToken: string,
+  authorizationCode: string,
 ) {
   try {
-    if (!oauthUserToken) {
+    if (!authorizationCode) {
       throw new AppError(
-        'Meta OAuth user token is required',
+        'Meta Embedded Signup authorization code is required',
         400,
       )
     }
 
+    const clientId = process.env.WHATSAPP_CLIENT_ID
+    const clientSecret = process.env.WHATSAPP_CLIENT_SECRET
+
+    if (!clientId || !clientSecret) {
+      throw new AppError(
+        'Meta WhatsApp client configuration is missing',
+        500,
+      )
+    }
+
     // --------------------------------------------------------
-    // 1. Debug the OAuth user token
+    // 1. Exchange Embedded Signup authorization code
+    //    for a Meta access token
     // --------------------------------------------------------
+
+    const tokenResponse = await axios.get(
+      `${this.metaApiBase}/oauth/access_token`,
+      {
+        params: {
+          client_id: clientId,
+          client_secret: clientSecret,
+          code: authorizationCode,
+        },
+      },
+    )
+
+    const oauthUserToken =
+      tokenResponse.data?.access_token
+
+    if (!oauthUserToken) {
+      logger.error(
+        'Meta token exchange response did not contain an access token:',
+        tokenResponse.data,
+      )
+
+      throw new AppError(
+        'Meta did not return an access token',
+        401,
+      )
+    }
+
+    logger.info(
+      `Meta Embedded Signup authorization code exchanged successfully for organization ${organizationId}`,
+    )
+
+    // --------------------------------------------------------
+    // 2. Debug the OAuth user token
+    // --------------------------------------------------------
+
     const debugResponse = await axios.get(
       `${this.metaApiBase}/${this.apiVersion}/debug_token`,
       {
@@ -215,7 +261,8 @@ async completeEmbeddedSignup(
       },
     )
 
-    const tokenData = debugResponse.data?.data
+    const tokenData =
+      debugResponse.data?.data
 
     if (!tokenData?.is_valid) {
       throw new AppError(
@@ -231,7 +278,8 @@ async completeEmbeddedSignup(
     if (
       configuredAppId &&
       tokenData.app_id &&
-      String(tokenData.app_id) !== String(configuredAppId)
+      String(tokenData.app_id) !==
+        String(configuredAppId)
     ) {
       throw new AppError(
         'The Meta OAuth token does not belong to this application',
@@ -240,15 +288,7 @@ async completeEmbeddedSignup(
     }
 
     // --------------------------------------------------------
-    // 2. Find the WABAs shared with this business
-    // --------------------------------------------------------
-    //
-    // The Embedded Signup token can be used to identify the
-    // shared WABA. Meta's Embedded Signup flow uses the
-    // Business Management endpoints for this step.
-    //
-    // We first inspect the granular scopes returned by
-    // debug_token.
+    // 3. Find the WABA returned by Embedded Signup
     // --------------------------------------------------------
 
     const granularScopes =
@@ -271,23 +311,31 @@ async completeEmbeddedSignup(
       )
     }
 
-    const wabaId = String(targetWabaIds[0])
+    const wabaId =
+      String(targetWabaIds[0])
 
-    // --------------------------------------------------------
-    // 3. Get WABA information
-    // --------------------------------------------------------
-    const wabaResponse = await axios.get(
-      `${this.metaApiBase}/${this.apiVersion}/${wabaId}`,
-      {
-        params: {
-          fields:
-            'id,name,currency,timezone_id,message_template_namespace',
-          access_token: oauthUserToken,
-        },
-      },
+    logger.info(
+      `Embedded Signup WABA identified: ${wabaId}`,
     )
 
-    const waba = wabaResponse.data
+    // --------------------------------------------------------
+    // 4. Get WABA information
+    // --------------------------------------------------------
+
+    const wabaResponse =
+      await axios.get(
+        `${this.metaApiBase}/${this.apiVersion}/${wabaId}`,
+        {
+          params: {
+            fields:
+              'id,name,currency,timezone_id,message_template_namespace',
+            access_token: oauthUserToken,
+          },
+        },
+      )
+
+    const waba =
+      wabaResponse.data
 
     if (!waba?.id) {
       throw new AppError(
@@ -297,18 +345,20 @@ async completeEmbeddedSignup(
     }
 
     // --------------------------------------------------------
-    // 4. Get phone numbers belonging to the WABA
+    // 5. Get phone numbers belonging to the WABA
     // --------------------------------------------------------
-    const phoneResponse = await axios.get(
-      `${this.metaApiBase}/${this.apiVersion}/${wabaId}/phone_numbers`,
-      {
-        params: {
-          fields:
-            'id,display_phone_number,verified_name,quality_rating,code_verification_status',
-          access_token: oauthUserToken,
+
+    const phoneResponse =
+      await axios.get(
+        `${this.metaApiBase}/${this.apiVersion}/${wabaId}/phone_numbers`,
+        {
+          params: {
+            fields:
+              'id,display_phone_number,verified_name,quality_rating,code_verification_status',
+            access_token: oauthUserToken,
+          },
         },
-      },
-    )
+      )
 
     const phoneNumbers =
       phoneResponse.data?.data || []
@@ -320,84 +370,110 @@ async completeEmbeddedSignup(
       )
     }
 
-    const phoneNumber = phoneNumbers[0]
+    /*
+     * Embedded Signup can potentially involve more than
+     * one phone number. For now we use the first one.
+     *
+     * Later we can pass phoneNumberId from the frontend
+     * session event and verify it belongs to this WABA.
+     */
+    const phoneNumber =
+      phoneNumbers[0]
 
     // --------------------------------------------------------
-    // 5. Get the owning business information
+    // 6. Get owning business information
     // --------------------------------------------------------
+
     let businessId = wabaId
+
     let businessName =
-      waba.name || 'WhatsApp Business'
+      waba.name ||
+      'WhatsApp Business'
 
     try {
-      const ownerResponse = await axios.get(
-        `${this.metaApiBase}/${this.apiVersion}/${wabaId}`,
-        {
-          params: {
-            fields:
-              'owner_business_info',
-            access_token: oauthUserToken,
+      const ownerResponse =
+        await axios.get(
+          `${this.metaApiBase}/${this.apiVersion}/${wabaId}`,
+          {
+            params: {
+              fields:
+                'owner_business_info',
+              access_token:
+                oauthUserToken,
+            },
           },
-        },
-      )
+        )
 
       const owner =
-        ownerResponse.data?.owner_business_info
+        ownerResponse.data
+          ?.owner_business_info
 
       if (owner?.id) {
-        businessId = String(owner.id)
+        businessId =
+          String(owner.id)
       }
 
       if (owner?.name) {
-        businessName = owner.name
+        businessName =
+          owner.name
       }
     } catch (error: any) {
       logger.warn(
         'Unable to retrieve WABA owner business information:',
-        error.response?.data || error.message,
+        error.response?.data ||
+          error.message,
       )
     }
 
     // --------------------------------------------------------
-    // 6. Calculate token expiry
+    // 7. Calculate token expiry
     // --------------------------------------------------------
-    const tokenExpiry = new Date()
+
+    const tokenExpiry =
+      new Date()
 
     if (tokenData.expires_at) {
       tokenExpiry.setTime(
-        Number(tokenData.expires_at) * 1000,
+        Number(tokenData.expires_at) *
+          1000,
       )
     } else {
-      // Keep a conservative fallback.
       tokenExpiry.setDate(
         tokenExpiry.getDate() + 60,
       )
     }
 
     // --------------------------------------------------------
-    // 7. Save the customer's WhatsApp account
+    // 8. Save customer's WhatsApp account
     // --------------------------------------------------------
-    const account = await this.saveAccount(
-      organizationId,
-      {
-        businessId,
-        businessName,
-        wabaId: String(waba.id),
-        phoneNumber:
-          phoneNumber.display_phone_number,
-        phoneNumberId: String(phoneNumber.id),
-        displayName:
-          phoneNumber.verified_name ||
-          waba.name ||
+
+    const account =
+      await this.saveAccount(
+        organizationId,
+        {
+          businessId,
           businessName,
-        accessToken: oauthUserToken,
-        tokenExpiry,
-      },
-    )
+          wabaId: String(
+            waba.id,
+          ),
+          phoneNumber:
+            phoneNumber.display_phone_number,
+          phoneNumberId:
+            String(phoneNumber.id),
+          displayName:
+            phoneNumber.verified_name ||
+            waba.name ||
+            businessName,
+          accessToken:
+            oauthUserToken,
+          tokenExpiry,
+        },
+      )
 
     // --------------------------------------------------------
-    // 8. Subscribe the WABA to this Meta app
+    // 9. Subscribe WABA to our Meta app
     // --------------------------------------------------------
+
     try {
       await this.subscribeWabaToApp(
         String(waba.id),
@@ -416,13 +492,15 @@ async completeEmbeddedSignup(
     } catch (error: any) {
       logger.warn(
         'WABA was connected but webhook subscription failed:',
-        error.response?.data || error.message,
+        error.response?.data ||
+          error.message,
       )
     }
 
     // --------------------------------------------------------
-    // 9. Sync templates
+    // 10. Sync WhatsApp templates
     // --------------------------------------------------------
+
     try {
       await this.syncMetaTemplates(
         organizationId,
@@ -434,11 +512,14 @@ async completeEmbeddedSignup(
       )
     }
 
-    return this.serializeAccount(account)
+    return this.serializeAccount(
+      account,
+    )
   } catch (error: any) {
     logger.error(
       'Embedded Signup completion failed:',
-      error.response?.data || error.message,
+      error.response?.data ||
+        error.message,
     )
 
     if (error instanceof AppError) {

@@ -159,6 +159,9 @@ export class WhatsAppController {
   /**
  * Complete Meta WhatsApp Embedded Signup
  */
+/**
+ * Complete Meta WhatsApp Embedded Signup
+ */
 async completeEmbeddedSignup(
   req: Request,
   res: Response,
@@ -167,11 +170,11 @@ async completeEmbeddedSignup(
   try {
     const { organizationId } = req.auth!
 
-    const { accessToken } = req.body
+    const { code } = req.body
 
-    if (!accessToken) {
+    if (!code) {
       throw new AppError(
-        'Meta Embedded Signup access token is required',
+        'Meta Embedded Signup authorization code is required',
         400,
       )
     }
@@ -179,7 +182,7 @@ async completeEmbeddedSignup(
     const account =
       await whatsappService.completeEmbeddedSignup(
         organizationId,
-        accessToken,
+        code,
       )
 
     return success(
@@ -187,14 +190,22 @@ async completeEmbeddedSignup(
       {
         connected: true,
         account: {
-          businessName: account.businessName,
-          displayName: account.displayName,
-          phoneNumber: account.phoneNumber,
-          phoneNumberId: account.phoneNumberId,
-          businessId: account.businessId,
-          wabaId: account.wabaId,
-          isConnected: account.isConnected,
-          webhookVerified: account.webhookVerified,
+          businessName:
+            account.businessName,
+          displayName:
+            account.displayName,
+          phoneNumber:
+            account.phoneNumber,
+          phoneNumberId:
+            account.phoneNumberId,
+          businessId:
+            account.businessId,
+          wabaId:
+            account.wabaId,
+          isConnected:
+            account.isConnected,
+          webhookVerified:
+            account.webhookVerified,
         },
       },
       'WhatsApp Embedded Signup completed successfully',

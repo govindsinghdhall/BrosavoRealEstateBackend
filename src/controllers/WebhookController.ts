@@ -2,22 +2,19 @@ import { Request, Response, NextFunction } from 'express'
 import { success } from '../utils/response'
 import { logger } from '../utils/logger'
 import {
-  WhatsAppAccount,
   WhatsAppWebhookLog,
+  WhatsAppAccount,
 } from '../models'
 import { WhatsAppService } from '../services/WhatsAppService'
 
-const whatsappService =
-  WhatsAppService.getInstance()
+const whatsappService = WhatsAppService.getInstance()
 
 export class WebhookController {
   /**
-   * Verify webhook (called by Meta)
+   * Verify WhatsApp webhook with Meta.
    *
-   * Meta sends:
-   * ?hub.mode=subscribe
-   * &hub.verify_token=...
-   * &hub.challenge=...
+   * URL:
+   * GET /api/v1/webhooks/whatsapp/:organizationId
    */
   async verifyWebhook(
     req: Request,
@@ -25,14 +22,19 @@ export class WebhookController {
     next: NextFunction,
   ) {
     try {
-      const mode =
-        req.query['hub.mode'] as string
+      const { organizationId } = req.params
+      const numericOrganizationId = Number(organizationId)
 
-      const token =
-        req.query['hub.verify_token'] as string
+      if (
+        !organizationId ||
+        !Number.isInteger(numericOrganizationId)
+      ) {
+        return res.status(400).send('Invalid organization ID')
+      }
 
-      const challenge =
-        req.query['hub.challenge'] as string
+      const mode = req.query['hub.mode'] as string
+      const token = req.query['hub.verify_token'] as string
+      const challenge = req.query['hub.challenge'] as string
 
       const verifyToken =
         process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN
@@ -44,42 +46,64 @@ export class WebhookController {
 
         return res
           .status(500)
-          .send('Webhook verification is not configured')
+          .send('Webhook verification token is not configured')
       }
 
       if (
-        mode === 'subscribe' &&
-        token === verifyToken
+        mode !== 'subscribe' ||
+        token !== verifyToken
       ) {
-        logger.info(
-          'WhatsApp webhook verified successfully',
+        logger.warn(
+          `WhatsApp webhook verification failed for organization ${numericOrganizationId}`,
         )
 
         return res
-          .status(200)
-          .send(challenge)
+          .status(403)
+          .send('Verification failed')
       }
 
-      logger.warn(
-        'WhatsApp webhook verification failed: invalid token',
+      const account =
+        await WhatsAppAccount.findOne({
+          organizationId: numericOrganizationId,
+          isConnected: true,
+          deletedAt: null,
+        })
+
+      if (!account) {
+        logger.warn(
+          `No connected WhatsApp account found for organization ${numericOrganizationId}`,
+        )
+
+        return res
+          .status(404)
+          .send('WhatsApp account not found')
+      }
+
+      await WhatsAppAccount.updateOne(
+        {
+          organizationId: numericOrganizationId,
+          deletedAt: null,
+        },
+        {
+          webhookVerified: true,
+        },
       )
 
-      return res
-        .status(403)
-        .send('Verification failed')
+      logger.info(
+        `WhatsApp webhook verified for organization ${numericOrganizationId}`,
+      )
+
+      return res.status(200).send(challenge)
     } catch (error) {
       next(error)
     }
   }
 
   /**
-   * Receive webhook from Meta.
+   * Receive WhatsApp webhook events from Meta.
    *
-   * IMPORTANT:
-   * Meta expects a fast 200 response.
-   *
-   * We resolve the organization from Meta's
-   * phone_number_id and then process the event.
+   * URL:
+   * POST /api/v1/webhooks/whatsapp/:organizationId
    */
   async receiveWebhook(
     req: Request,
@@ -87,130 +111,181 @@ export class WebhookController {
     next: NextFunction,
   ) {
     try {
+      const { organizationId } = req.params
+      const numericOrganizationId = Number(organizationId)
+
+      if (
+        !organizationId ||
+        !Number.isInteger(numericOrganizationId)
+      ) {
+        return res.status(400).send('Invalid organization ID')
+      }
+
       const payload = req.body
       const headers = req.headers
 
-      if (!payload) {
-        logger.warn(
-          'WhatsApp webhook received with empty body',
-        )
-
-        return res.sendStatus(200)
-      }
-
-      logger.info(
-        'WhatsApp webhook received',
-      )
+      /*
+       * Meta webhook payload structure:
+       *
+       * entry[0]
+       *   changes[0]
+       *     value
+       *       metadata
+       *         phone_number_id
+       */
+      const value =
+        payload?.entry?.[0]?.changes?.[0]?.value
 
       const phoneNumberId =
-        payload?.entry?.[0]?.changes?.[0]?.value
-          ?.metadata?.phone_number_id
+        value?.metadata?.phone_number_id
 
-      let organizationId: number | null =
-        null
+      const wabaId =
+        value?.metadata?.business_account_id ||
+        value?.metadata?.waba_id
 
-      if (phoneNumberId) {
-        const account =
-          await WhatsAppAccount.findOne({
-            phoneNumberId: String(
-              phoneNumberId,
-            ),
-            isConnected: true,
-            deletedAt: null,
-          })
+      if (!phoneNumberId) {
+        logger.warn(
+          `WhatsApp webhook rejected for organization ${numericOrganizationId}: phone_number_id missing`,
+        )
 
-        if (account) {
-          organizationId =
-            account.organizationId
-        }
+        /*
+         * Return 200 so Meta does not continuously retry
+         * an invalid/unusable webhook.
+         */
+        return res.sendStatus(200)
       }
 
       /*
-       * Do not reject unknown organizations.
+       * Find the WhatsApp account using BOTH:
        *
-       * Meta should receive HTTP 200 even when we cannot
-       * resolve an organization. This prevents unnecessary
-       * webhook retries.
+       * 1. organizationId from the webhook URL
+       * 2. phoneNumberId supplied by Meta
        *
-       * The webhook is still stored for diagnostics.
+       * This prevents somebody from changing the organizationId
+       * in the URL and processing another organization's webhook.
        */
-      if (!organizationId) {
-        await WhatsAppWebhookLog.create({
-          event:
-            payload?.entry?.[0]?.changes?.[0]
-              ?.field || 'unknown',
+      const account =
+        await WhatsAppAccount.findOne({
+          organizationId: numericOrganizationId,
+          phoneNumberId: String(phoneNumberId),
+          isConnected: true,
+          deletedAt: null,
+        }).lean()
 
-          payload,
-
-          headers,
-
-          processed: false,
-
-          error:
-            'Unable to resolve organization from phone_number_id',
-        })
-
+      if (!account) {
         logger.warn(
-          `WhatsApp webhook organization could not be resolved for phone_number_id=${phoneNumberId || 'unknown'}`,
+          `WhatsApp webhook rejected: phoneNumberId ${phoneNumberId} does not belong to organization ${numericOrganizationId}`,
         )
 
         return res.sendStatus(200)
       }
 
       /*
-       * WhatsAppService.processWebhook() is responsible for:
-       *
-       * - webhook event logging
-       * - inbound messages
-       * - sent status
-       * - delivered status
-       * - read status
-       * - failed status
-       * - campaign recipient updates
-       * - conversation updates
+       * If Meta provides a WABA/business account ID,
+       * verify that it also matches the stored account.
        */
+      if (
+        wabaId &&
+        String(wabaId) !== String(account.wabaId)
+      ) {
+        logger.warn(
+          `WhatsApp webhook rejected: WABA mismatch for organization ${numericOrganizationId}. Received ${wabaId}, expected ${account.wabaId}`,
+        )
+
+        return res.sendStatus(200)
+      }
+
+      const event =
+        payload?.entry?.[0]?.changes?.[0]?.field ||
+        'unknown'
+
+      logger.info(
+        `WhatsApp webhook received for organization ${numericOrganizationId}, phoneNumberId ${phoneNumberId}`,
+      )
+
+      /*
+       * Store the webhook before processing.
+       */
+      const webhookLog =
+        await WhatsAppWebhookLog.create({
+          organizationId: numericOrganizationId,
+          event,
+          payload,
+          headers,
+          processed: false,
+        })
+
       try {
+        /*
+         * Process the webhook using the verified
+         * organization.
+         */
         await whatsappService.processWebhook(
-          organizationId,
+          numericOrganizationId,
           payload,
         )
+
+        await WhatsAppWebhookLog.updateOne(
+          {
+            _id: webhookLog._id,
+            organizationId: numericOrganizationId,
+          },
+          {
+            processed: true,
+            processedAt: new Date(),
+            error: null,
+          },
+        )
+
+        logger.info(
+          `WhatsApp webhook processed successfully for organization ${numericOrganizationId}`,
+        )
       } catch (error: any) {
-        /*
-         * Never return a non-200 response to Meta because
-         * of an internal processing error. The event has
-         * already been logged by the service and can be
-         * investigated/reprocessed.
-         */
+        const errorMessage =
+          error?.message ||
+          'Webhook processing failed'
+
         logger.error(
-          'Error processing WhatsApp webhook:',
-          error?.response?.data ||
-            error?.message ||
-            error,
+          `Error processing WhatsApp webhook for organization ${numericOrganizationId}:`,
+          error,
+        )
+
+        await WhatsAppWebhookLog.updateOne(
+          {
+            _id: webhookLog._id,
+            organizationId: numericOrganizationId,
+          },
+          {
+            processed: false,
+            error: errorMessage,
+          },
         )
       }
 
-      return res.sendStatus(200)
-    } catch (error: any) {
       /*
-       * Always acknowledge Meta webhooks.
-       *
-       * We log the error and return 200 so Meta does not
-       * repeatedly retry an event because of an internal
-       * application failure.
+       * Always acknowledge Meta.
        */
+      return res.sendStatus(200)
+    } catch (error) {
       logger.error(
         'Error receiving WhatsApp webhook:',
-        error?.response?.data ||
-          error?.message ||
-          error,
+        error,
       )
 
+      /*
+       * Meta expects HTTP 200.
+       */
       return res.sendStatus(200)
     }
   }
 
   /**
-   * Get webhook logs for the authenticated organization.
+   * Get webhook logs.
+   *
+   * Protected CRM endpoint.
+   *
+   * GET:
+   * /api/v1/whatsapp/webhook-logs
    */
   async getWebhookLogs(
     req: Request,
@@ -218,13 +293,21 @@ export class WebhookController {
     next: NextFunction,
   ) {
     try {
-      const { organizationId } =
-        req.auth!
+      const { organizationId } = req.auth!
 
       const {
         limit = 50,
         processed,
       } = req.query
+
+      const query: any = {
+        organizationId,
+      }
+
+      if (processed !== undefined) {
+        query.processed =
+          processed === 'true'
+      }
 
       const parsedLimit = Math.min(
         100,
@@ -234,21 +317,8 @@ export class WebhookController {
         ),
       )
 
-      const query: any = {
-        organizationId,
-      }
-
-      if (
-        processed !== undefined
-      ) {
-        query.processed =
-          processed === 'true'
-      }
-
       const logs =
-        await WhatsAppWebhookLog.find(
-          query,
-        )
+        await WhatsAppWebhookLog.find(query)
           .sort({
             createdAt: -1,
           })
@@ -265,3 +335,5 @@ export class WebhookController {
     }
   }
 }
+
+export default WebhookController

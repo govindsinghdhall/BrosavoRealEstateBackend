@@ -14,13 +14,12 @@ const webhookController = new WebhookController()
 
 // Meta WhatsApp webhook verification
 router.get(
-  '/webhooks/whatsapp',
+  '/webhooks/whatsapp/:organizationId',
   webhookController.verifyWebhook,
 )
 
-// Meta WhatsApp webhook events
 router.post(
-  '/webhooks/whatsapp',
+  '/webhooks/whatsapp/:organizationId',
   webhookController.receiveWebhook,
 )
 

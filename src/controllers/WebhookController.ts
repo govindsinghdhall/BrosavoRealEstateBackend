@@ -15,6 +15,13 @@ export class WebhookController {
    *
    * URL:
    * GET /api/v1/webhooks/whatsapp/:organizationId
+   *
+   * Important:
+   * Meta webhook verification does NOT require a WhatsAppAccount
+   * to already exist in the database.
+   *
+   * The WhatsAppAccount will be created later during
+   * WhatsApp onboarding / Embedded Signup.
    */
   async verifyWebhook(
     req: Request,
@@ -27,7 +34,8 @@ export class WebhookController {
 
       if (
         !organizationId ||
-        !Number.isInteger(numericOrganizationId)
+        !Number.isInteger(numericOrganizationId) ||
+        numericOrganizationId <= 0
       ) {
         return res.status(400).send('Invalid organization ID')
       }
@@ -51,7 +59,8 @@ export class WebhookController {
 
       if (
         mode !== 'subscribe' ||
-        token !== verifyToken
+        token !== verifyToken ||
+        !challenge
       ) {
         logger.warn(
           `WhatsApp webhook verification failed for organization ${numericOrganizationId}`,
@@ -61,33 +70,6 @@ export class WebhookController {
           .status(403)
           .send('Verification failed')
       }
-
-      const account =
-        await WhatsAppAccount.findOne({
-          organizationId: numericOrganizationId,
-          isConnected: true,
-          deletedAt: null,
-        })
-
-      if (!account) {
-        logger.warn(
-          `No connected WhatsApp account found for organization ${numericOrganizationId}`,
-        )
-
-        return res
-          .status(404)
-          .send('WhatsApp account not found')
-      }
-
-      await WhatsAppAccount.updateOne(
-        {
-          organizationId: numericOrganizationId,
-          deletedAt: null,
-        },
-        {
-          webhookVerified: true,
-        },
-      )
 
       logger.info(
         `WhatsApp webhook verified for organization ${numericOrganizationId}`,
@@ -104,6 +86,13 @@ export class WebhookController {
    *
    * URL:
    * POST /api/v1/webhooks/whatsapp/:organizationId
+   *
+   * Security:
+   *
+   * 1. organizationId comes from the webhook URL.
+   * 2. phone_number_id comes from Meta's webhook payload.
+   * 3. Both must belong to the same active WhatsAppAccount.
+   * 4. If WABA ID is available, it is also verified.
    */
   async receiveWebhook(
     req: Request,
@@ -116,7 +105,8 @@ export class WebhookController {
 
       if (
         !organizationId ||
-        !Number.isInteger(numericOrganizationId)
+        !Number.isInteger(numericOrganizationId) ||
+        numericOrganizationId <= 0
       ) {
         return res.status(400).send('Invalid organization ID')
       }
@@ -125,7 +115,7 @@ export class WebhookController {
       const headers = req.headers
 
       /*
-       * Meta webhook payload structure:
+       * Meta webhook payload:
        *
        * entry[0]
        *   changes[0]
@@ -133,6 +123,7 @@ export class WebhookController {
        *       metadata
        *         phone_number_id
        */
+
       const value =
         payload?.entry?.[0]?.changes?.[0]?.value
 
@@ -143,26 +134,30 @@ export class WebhookController {
         value?.metadata?.business_account_id ||
         value?.metadata?.waba_id
 
+      /*
+       * phone_number_id is required for tenant identification.
+       */
       if (!phoneNumberId) {
         logger.warn(
           `WhatsApp webhook rejected for organization ${numericOrganizationId}: phone_number_id missing`,
         )
 
         /*
-         * Return 200 so Meta does not continuously retry
-         * an invalid/unusable webhook.
+         * Return 200 so Meta does not repeatedly retry
+         * an unusable webhook.
          */
         return res.sendStatus(200)
       }
 
       /*
-       * Find the WhatsApp account using BOTH:
+       * Find the ACTIVE WhatsApp account belonging to:
        *
-       * 1. organizationId from the webhook URL
-       * 2. phoneNumberId supplied by Meta
+       * organizationId from URL
+       * +
+       * phoneNumberId from Meta
        *
-       * This prevents somebody from changing the organizationId
-       * in the URL and processing another organization's webhook.
+       * This prevents somebody from changing the organization ID
+       * in the URL and injecting events into another organization.
        */
       const account =
         await WhatsAppAccount.findOne({
@@ -174,7 +169,7 @@ export class WebhookController {
 
       if (!account) {
         logger.warn(
-          `WhatsApp webhook rejected: phoneNumberId ${phoneNumberId} does not belong to organization ${numericOrganizationId}`,
+          `WhatsApp webhook rejected: phoneNumberId ${phoneNumberId} does not belong to an active WhatsApp account for organization ${numericOrganizationId}`,
         )
 
         return res.sendStatus(200)
@@ -182,7 +177,7 @@ export class WebhookController {
 
       /*
        * If Meta provides a WABA/business account ID,
-       * verify that it also matches the stored account.
+       * verify that it matches the stored WABA ID.
        */
       if (
         wabaId &&
@@ -200,11 +195,11 @@ export class WebhookController {
         'unknown'
 
       logger.info(
-        `WhatsApp webhook received for organization ${numericOrganizationId}, phoneNumberId ${phoneNumberId}`,
+        `WhatsApp webhook received for organization ${numericOrganizationId}, phoneNumberId ${phoneNumberId}, event ${event}`,
       )
 
       /*
-       * Store the webhook before processing.
+       * Store the webhook before processing it.
        */
       const webhookLog =
         await WhatsAppWebhookLog.create({
@@ -217,14 +212,16 @@ export class WebhookController {
 
       try {
         /*
-         * Process the webhook using the verified
-         * organization.
+         * Process the verified webhook.
          */
         await whatsappService.processWebhook(
           numericOrganizationId,
           payload,
         )
 
+        /*
+         * Mark webhook as successfully processed.
+         */
         await WhatsAppWebhookLog.updateOne(
           {
             _id: webhookLog._id,
@@ -263,7 +260,7 @@ export class WebhookController {
       }
 
       /*
-       * Always acknowledge Meta.
+       * Meta expects HTTP 200.
        */
       return res.sendStatus(200)
     } catch (error) {
@@ -273,7 +270,7 @@ export class WebhookController {
       )
 
       /*
-       * Meta expects HTTP 200.
+       * Always acknowledge Meta.
        */
       return res.sendStatus(200)
     }

@@ -12,18 +12,39 @@ const webhookController = new WebhookController()
 // PUBLIC ROUTES
 // ============================================================
 
-// Meta WhatsApp webhook verification
+// ============================================================
+// META WHATSAPP WEBHOOK
+// ============================================================
+//
+// IMPORTANT:
+// This endpoint is used by Meta for BOTH:
+// 1. GET  -> webhook verification
+// 2. POST -> incoming WhatsApp events
+//
+// Do NOT put organizationId in the URL.
+// The organization will be resolved from the WhatsApp
+// phone_number_id / WABA information in the webhook payload.
+//
+
 router.get(
-  '/webhooks/whatsapp/:organizationId',
+  '/webhooks/whatsapp',
   webhookController.verifyWebhook,
 )
 
 router.post(
-  '/webhooks/whatsapp/:organizationId',
+  '/webhooks/whatsapp',
   webhookController.receiveWebhook,
 )
 
-// Meta OAuth callback
+// ============================================================
+// META OAUTH CALLBACK
+// ============================================================
+//
+// This is completely separate from the WhatsApp webhook.
+//
+// Meta OAuth redirects here after a user connects WhatsApp.
+//
+
 router.get(
   '/whatsapp/callback',
   whatsappController.oauthCallback,
@@ -212,6 +233,10 @@ router.get(
   requirePermission('whatsapp.manage'),
   webhookController.getWebhookLogs,
 )
+
+// ============================================================
+// META EMBEDDED SIGNUP
+// ============================================================
 
 // Complete Meta Embedded Signup
 router.post(

@@ -460,13 +460,16 @@ async completeEmbeddedSignup(
             waba.id,
           ),
           phoneNumber:
-            phoneNumber.display_phone_number,
+            phoneNumber.display_phone_number ||
+            phoneNumber.id ||
+            'unknown',
           phoneNumberId:
             String(phoneNumber.id),
           displayName:
             phoneNumber.verified_name ||
             waba.name ||
-            businessName,
+            businessName ||
+            'WhatsApp Business',
           accessToken:
             oauthUserToken,
           tokenExpiry,
@@ -647,61 +650,227 @@ private async subscribeWabaToApp(
       tokenExpiry: Date
     },
   ): Promise<any> {
+    const orgId = Number(organizationId)
+    const phoneNumberId = String(accountData.phoneNumberId)
+
+    if (!Number.isFinite(orgId)) {
+      throw new AppError('Invalid organization for WhatsApp account save', 400)
+    }
+
+    if (!phoneNumberId) {
+      throw new AppError('WhatsApp phone number ID is required', 400)
+    }
+
+    let encryptedToken: string
+
     try {
-      const encryptedToken = encryptToken(accountData.accessToken)
+      encryptedToken = encryptToken(accountData.accessToken)
+    } catch (error: any) {
+      logger.error(
+        'Error encrypting WhatsApp access token during account save:',
+        error.message,
+      )
 
-      const existing = await WhatsAppAccount.findOne({
-        organizationId,
-      })
+      throw new AppError(
+        'WhatsApp account could not be saved because token encryption is misconfigured',
+        500,
+      )
+    }
 
-      if (existing) {
-        existing.businessName = accountData.businessName
-        existing.displayName = accountData.displayName
-        existing.businessId = accountData.businessId
-        existing.wabaId = accountData.wabaId
-        existing.phoneNumber = accountData.phoneNumber
-        existing.phoneNumberId = accountData.phoneNumberId
-        existing.accessToken = encryptedToken
-        existing.tokenType = 'user'
-        existing.tokenExpiry = accountData.tokenExpiry
-        existing.isConnected = true
-        existing.webhookVerified = false
-        existing.deletedAt = null
-        existing.connectedAt = new Date()
-        existing.disconnectedAt = null
-        existing.lastSync = new Date()
+    try {
+      /*
+       * Reconnect / upsert priority:
+       * 1. Active account for this organization
+       * 2. Any row for this organization + phoneNumberId (incl. soft-deleted)
+       * 3. Soft-deleted / disconnected row for this organization
+       *
+       * Never overwrite another tenant's connected phoneNumberId.
+       */
+      const phoneTakenByOtherOrg = await WhatsAppAccount.findOne({
+        phoneNumberId,
+        organizationId: { $ne: orgId },
+        deletedAt: null,
+        isConnected: true,
+      }).select('_id organizationId')
 
-        await existing.save()
-
-        return existing
+      if (phoneTakenByOtherOrg) {
+        throw new AppError(
+          'This WhatsApp phone number is already connected to another organization',
+          409,
+        )
       }
 
-      return await WhatsAppAccount.create({
-        organizationId,
+      let existing =
+        (await WhatsAppAccount.findOne({
+          organizationId: orgId,
+          deletedAt: null,
+          isConnected: true,
+        }).select('+accessToken')) ||
+        (await WhatsAppAccount.findOne({
+          organizationId: orgId,
+          phoneNumberId,
+        }).select('+accessToken')) ||
+        (await WhatsAppAccount.findOne({
+          organizationId: orgId,
+        })
+          .sort({ updatedAt: -1 })
+          .select('+accessToken'))
+
+      const accountFields = {
         businessName: accountData.businessName,
         displayName: accountData.displayName,
-        businessId: accountData.businessId,
-        wabaId: accountData.wabaId,
+        businessId: String(accountData.businessId),
+        wabaId: String(accountData.wabaId),
         phoneNumber: accountData.phoneNumber,
-        phoneNumberId: accountData.phoneNumberId,
+        phoneNumberId,
         accessToken: encryptedToken,
         tokenType: 'user',
         tokenExpiry: accountData.tokenExpiry,
         isConnected: true,
         webhookVerified: false,
+        deletedAt: null as Date | null,
         connectedAt: new Date(),
-        disconnectedAt: null,
+        disconnectedAt: null as Date | null,
         lastSync: new Date(),
-        deletedAt: null,
+      }
+
+      if (existing) {
+        const updated = await WhatsAppAccount.findOneAndUpdate(
+          {
+            _id: existing._id,
+            organizationId: orgId,
+          },
+          {
+            $set: accountFields,
+          },
+          {
+            new: true,
+            runValidators: true,
+            context: 'query',
+          },
+        ).select('+accessToken')
+
+        if (!updated) {
+          throw new AppError(
+            'Failed to update the existing WhatsApp account for this organization',
+            500,
+          )
+        }
+
+        return updated
+      }
+
+      return await WhatsAppAccount.create({
+        organizationId: orgId,
+        ...accountFields,
       })
     } catch (error: any) {
-      logger.error('Error saving WhatsApp account:', error.message)
-
       if (error instanceof AppError) {
         throw error
       }
 
-      throw new AppError('Failed to save WhatsApp account', 500)
+      const mongoCode = error?.code
+      const isDuplicate =
+        mongoCode === 11000 ||
+        (error?.name === 'MongoServerError' &&
+          String(error?.message || '').includes('E11000'))
+
+      if (isDuplicate) {
+        /*
+         * Race or stale row: another concurrent signup created/updated the
+         * same org or phoneNumberId. Re-load and update instead of failing.
+         */
+        try {
+          const raced =
+            (await WhatsAppAccount.findOne({
+              organizationId: orgId,
+              phoneNumberId,
+            }).select('_id organizationId')) ||
+            (await WhatsAppAccount.findOne({
+              organizationId: orgId,
+              deletedAt: null,
+              isConnected: true,
+            }).select('_id organizationId'))
+
+          if (raced && Number(raced.organizationId) === orgId) {
+            const recovered = await WhatsAppAccount.findOneAndUpdate(
+              {
+                _id: raced._id,
+                organizationId: orgId,
+              },
+              {
+                $set: {
+                  businessName: accountData.businessName,
+                  displayName: accountData.displayName,
+                  businessId: String(accountData.businessId),
+                  wabaId: String(accountData.wabaId),
+                  phoneNumber: accountData.phoneNumber,
+                  phoneNumberId,
+                  accessToken: encryptedToken,
+                  tokenType: 'user',
+                  tokenExpiry: accountData.tokenExpiry,
+                  isConnected: true,
+                  webhookVerified: false,
+                  deletedAt: null,
+                  connectedAt: new Date(),
+                  disconnectedAt: null,
+                  lastSync: new Date(),
+                },
+              },
+              {
+                new: true,
+                runValidators: true,
+                context: 'query',
+              },
+            ).select('+accessToken')
+
+            if (recovered) {
+              return recovered
+            }
+          }
+        } catch (retryError: any) {
+          logger.error(
+            'Error recovering WhatsApp account after duplicate key:',
+            retryError.message,
+          )
+        }
+
+        logger.error(
+          'Duplicate key while saving WhatsApp account:',
+          error.message,
+        )
+
+        throw new AppError(
+          'A WhatsApp account with this phone number is already connected. Disconnect it first or reconnect the existing organization account.',
+          409,
+        )
+      }
+
+      if (error?.name === 'ValidationError') {
+        const details = Object.values(error.errors || {})
+          .map((item: any) => item?.message)
+          .filter(Boolean)
+          .join('; ')
+
+        logger.error(
+          'Validation error while saving WhatsApp account:',
+          details || error.message,
+        )
+
+        throw new AppError(
+          details
+            ? `Failed to save WhatsApp account: ${details}`
+            : 'Failed to save WhatsApp account due to invalid account data',
+          400,
+        )
+      }
+
+      logger.error('Error saving WhatsApp account:', error.message)
+
+      throw new AppError(
+        'Failed to save WhatsApp account. Please try reconnecting WhatsApp.',
+        500,
+      )
     }
   }
 

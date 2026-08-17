@@ -3,7 +3,7 @@ import crypto from 'crypto'
 const algorithm = 'aes-256-gcm'
 
 function getEncryptionKey(): Buffer {
-  const raw = process.env.ENCRYPTION_KEY
+  const raw = process.env.ENCRYPTION_KEY || process.env.META_ENCRYPTION_KEY
   if (!raw) {
     throw new Error(
       'ENCRYPTION_KEY is required. Set a stable 64-char hex value in .env (32 bytes).',

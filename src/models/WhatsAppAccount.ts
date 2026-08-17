@@ -10,9 +10,12 @@ export interface IWhatsAppAccount extends Document<number> {
   phoneNumber: string
   phoneNumberId: string
   accessToken: string
+  tokenType: string
   tokenExpiry: Date
   isConnected: boolean
   webhookVerified: boolean
+  connectedAt: Date | null
+  disconnectedAt: Date | null
   lastSync: Date
   deletedAt: Date | null
   createdAt: Date
@@ -80,6 +83,12 @@ const whatsAppAccountSchema =
         select: false,
       },
 
+      tokenType: {
+        type: String,
+        default: 'user',
+        trim: true,
+      },
+
       tokenExpiry: {
         type: Date,
         required: true,
@@ -94,6 +103,16 @@ const whatsAppAccountSchema =
       webhookVerified: {
         type: Boolean,
         default: false,
+      },
+
+      connectedAt: {
+        type: Date,
+        default: null,
+      },
+
+      disconnectedAt: {
+        type: Date,
+        default: null,
       },
 
       lastSync: {
@@ -134,6 +153,19 @@ whatsAppAccountSchema.index({
   organizationId: 1,
   wabaId: 1,
 })
+
+whatsAppAccountSchema.index(
+  {
+    phoneNumberId: 1,
+  },
+  {
+    unique: true,
+    partialFilterExpression: {
+      deletedAt: null,
+      isConnected: true,
+    },
+  },
+)
 
 // Business lookup.
 whatsAppAccountSchema.index({

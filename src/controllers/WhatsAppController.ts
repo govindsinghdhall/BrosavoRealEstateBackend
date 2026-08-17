@@ -7,6 +7,10 @@ import {
 } from '../utils/response'
 import { AppError } from '../utils/errors'
 import {
+  createEmbeddedSignupState,
+  verifyEmbeddedSignupState,
+} from '../utils/signupState'
+import {
   WhatsAppMetaTemplate,
   WhatsAppCampaign,
   WhatsAppConversation,
@@ -168,9 +172,9 @@ async completeEmbeddedSignup(
   next: NextFunction,
 ) {
   try {
-    const { organizationId } = req.auth!
+    const { organizationId, userId } = req.auth!
 
-    const { code } = req.body
+    const { code, state } = req.body
 
     if (!code) {
       throw new AppError(
@@ -178,6 +182,15 @@ async completeEmbeddedSignup(
         400,
       )
     }
+
+    if (!state) {
+      throw new AppError(
+        'WhatsApp signup state is required',
+        400,
+      )
+    }
+
+    verifyEmbeddedSignupState(state, organizationId, userId)
 
     const account =
       await whatsappService.completeEmbeddedSignup(
@@ -190,26 +203,81 @@ async completeEmbeddedSignup(
       {
         connected: true,
         account: {
-          businessName:
-            account.businessName,
-          displayName:
-            account.displayName,
-          phoneNumber:
-            account.phoneNumber,
-          phoneNumberId:
-            account.phoneNumberId,
-          businessId:
-            account.businessId,
-          wabaId:
-            account.wabaId,
-          isConnected:
-            account.isConnected,
-          webhookVerified:
-            account.webhookVerified,
+          businessName: account.businessName,
+          displayName: account.displayName,
+          phoneNumber: account.phoneNumber,
+          phoneNumberId: account.phoneNumberId,
+          businessId: account.businessId,
+          wabaId: account.wabaId,
+          isConnected: account.isConnected,
+          webhookVerified: account.webhookVerified,
+          connectedAt: account.connectedAt,
         },
       },
       'WhatsApp Embedded Signup completed successfully',
     )
+  } catch (error) {
+    next(error)
+  }
+}
+
+async initiateEmbeddedSignup(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  try {
+    const { organizationId, userId } = req.auth!
+
+    const state = createEmbeddedSignupState(organizationId, userId)
+
+    return success(
+      res,
+      { state },
+      'WhatsApp Embedded Signup initiated',
+    )
+  } catch (error) {
+    next(error)
+  }
+}
+
+async testConnection(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  try {
+    const { organizationId } = req.auth!
+    const result = await whatsappService.testConnection(organizationId)
+    return success(res, result, result.message)
+  } catch (error) {
+    next(error)
+  }
+}
+
+async sendCrmMessage(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  try {
+    const { organizationId } = req.auth!
+    const { text, to, leadId, contactId, conversationId } = req.body
+
+    const result = await whatsappService.sendCrmTextMessage(
+      organizationId,
+      {
+        text,
+        to,
+        leadId: leadId ? Number(leadId) : undefined,
+        contactId: contactId ? Number(contactId) : undefined,
+        conversationId: conversationId
+          ? Number(conversationId)
+          : undefined,
+      },
+    )
+
+    return success(res, result, 'Message sent successfully')
   } catch (error) {
     next(error)
   }
@@ -938,11 +1006,11 @@ async completeEmbeddedSignup(
   ) {
     try {
       const { organizationId } = req.auth!
-      const { contactId } = req.body
+      const { contactId, leadId } = req.body
 
-      if (!contactId) {
+      if (!contactId && !leadId) {
         throw new AppError(
-          'Contact ID is required',
+          'Contact ID or Lead ID is required',
           400,
         )
       }
@@ -950,7 +1018,8 @@ async completeEmbeddedSignup(
       const conversation =
         await whatsappService.createConversation(
           organizationId,
-          Number(contactId),
+          contactId ? Number(contactId) : undefined,
+          leadId ? Number(leadId) : undefined,
         )
 
       return success(

@@ -8,10 +8,12 @@ import {
   WhatsAppCampaign,
   WhatsAppCampaignRecipient,
   Contact,
+  Lead,
 } from '../models'
 import { AppError } from '../utils/errors'
 import { decryptToken, encryptToken } from '../utils/encryption'
 import { logger } from '../utils/logger'
+import { getMetaApiBase, getMetaAppId, getMetaAppSecret, getMetaGraphApiVersion } from '../utils/metaConfig'
 import { normalizeIndianPhoneNumber } from '../utils/phone'
 
 type WhatsAppMessageType =
@@ -37,11 +39,11 @@ interface SendMessageData {
 export class WhatsAppService {
   private static instance: WhatsAppService
 
-  private readonly metaApiBase =
-    process.env.WHATSAPP_API_BASE_URL || 'https://graph.facebook.com'
+  private readonly metaApiBase = getMetaApiBase()
 
-  private readonly apiVersion =
-    process.env.WHATSAPP_GRAPH_API_VERSION || 'v18.0'
+  private get apiVersion(): string {
+    return getMetaGraphApiVersion()
+  }
 
   private constructor() {}
 
@@ -61,8 +63,8 @@ export class WhatsAppService {
     organizationId: number
     userId: number
   }): Promise<string> {
-    const clientId = process.env.WHATSAPP_CLIENT_ID
-    const redirectUri = process.env.WHATSAPP_REDIRECT_URI
+    const clientId = getMetaAppId()
+    const redirectUri = process.env.WHATSAPP_REDIRECT_URI || process.env.META_OAUTH_REDIRECT_URI
 
     if (!clientId) {
       throw new AppError('WHATSAPP_CLIENT_ID is not configured', 500)
@@ -96,8 +98,8 @@ export class WhatsAppService {
 
   async exchangeToken(code: string, redirectUri: string): Promise<any> {
     try {
-      const clientId = process.env.WHATSAPP_CLIENT_ID
-      const clientSecret = process.env.WHATSAPP_CLIENT_SECRET
+      const clientId = getMetaAppId()
+      const clientSecret = getMetaAppSecret()
 
       if (!clientId || !clientSecret) {
         throw new AppError(
@@ -200,8 +202,8 @@ async completeEmbeddedSignup(
       )
     }
 
-    const clientId = process.env.WHATSAPP_CLIENT_ID
-    const clientSecret = process.env.WHATSAPP_CLIENT_SECRET
+    const clientId = getMetaAppId()
+    const clientSecret = getMetaAppSecret()
 
     if (!clientId || !clientSecret) {
       throw new AppError(
@@ -272,8 +274,7 @@ async completeEmbeddedSignup(
     }
 
     // Make sure this token belongs to our Meta app.
-    const configuredAppId =
-      process.env.WHATSAPP_CLIENT_ID
+    const configuredAppId = getMetaAppId()
 
     if (
       configuredAppId &&
@@ -649,20 +650,23 @@ private async subscribeWabaToApp(
 
       const existing = await WhatsAppAccount.findOne({
         organizationId,
-        businessId: accountData.businessId,
       })
 
       if (existing) {
         existing.businessName = accountData.businessName
         existing.displayName = accountData.displayName
+        existing.businessId = accountData.businessId
         existing.wabaId = accountData.wabaId
         existing.phoneNumber = accountData.phoneNumber
         existing.phoneNumberId = accountData.phoneNumberId
         existing.accessToken = encryptedToken
+        existing.tokenType = 'user'
         existing.tokenExpiry = accountData.tokenExpiry
         existing.isConnected = true
         existing.webhookVerified = false
         existing.deletedAt = null
+        existing.connectedAt = new Date()
+        existing.disconnectedAt = null
         existing.lastSync = new Date()
 
         await existing.save()
@@ -679,9 +683,12 @@ private async subscribeWabaToApp(
         phoneNumber: accountData.phoneNumber,
         phoneNumberId: accountData.phoneNumberId,
         accessToken: encryptedToken,
+        tokenType: 'user',
         tokenExpiry: accountData.tokenExpiry,
         isConnected: true,
         webhookVerified: false,
+        connectedAt: new Date(),
+        disconnectedAt: null,
         lastSync: new Date(),
         deletedAt: null,
       })
@@ -774,6 +781,98 @@ private async subscribeWabaToApp(
     return this.serializeAccount(account)
   }
 
+  async testConnection(organizationId: number): Promise<{
+    ok: boolean
+    message: string
+    displayName?: string
+    businessPhone?: string
+    wabaId?: string
+    phoneNumberId?: string
+  }> {
+    let accessToken: string
+    let account: any
+
+    try {
+      const loaded = await this.getAccountWithToken(organizationId)
+      account = loaded.account
+      accessToken = loaded.accessToken
+    } catch (error: any) {
+      if (error instanceof AppError) {
+        throw error
+      }
+
+      throw new AppError('Access token is invalid.', 401)
+    }
+
+    try {
+      const phoneResponse = await axios.get(
+        `${this.metaApiBase}/${this.apiVersion}/${account.phoneNumberId}`,
+        {
+          params: {
+            fields: 'id,display_phone_number,verified_name,quality_rating',
+            access_token: accessToken,
+          },
+          timeout: 20000,
+        },
+      )
+
+      const wabaResponse = await axios.get(
+        `${this.metaApiBase}/${this.apiVersion}/${account.wabaId}`,
+        {
+          params: {
+            fields: 'id,name',
+            access_token: accessToken,
+          },
+          timeout: 20000,
+        },
+      )
+
+      if (!phoneResponse.data?.id) {
+        throw new AppError('Phone number is unavailable.', 404)
+      }
+
+      if (!wabaResponse.data?.id) {
+        throw new AppError('WhatsApp Business Account is unavailable.', 404)
+      }
+
+      await WhatsAppAccount.updateOne(
+        { organizationId, _id: account._id },
+        { lastSync: new Date() },
+      )
+
+      return {
+        ok: true,
+        message: 'WhatsApp connection is active.',
+        displayName:
+          phoneResponse.data.verified_name || account.displayName,
+        businessPhone:
+          phoneResponse.data.display_phone_number || account.phoneNumber,
+        wabaId: String(wabaResponse.data.id),
+        phoneNumberId: String(phoneResponse.data.id),
+      }
+    } catch (error: any) {
+      if (error instanceof AppError) {
+        throw error
+      }
+
+      const status = error.response?.status
+      const metaMessage = error.response?.data?.error?.message
+
+      if (status === 401 || status === 403) {
+        throw new AppError('Access token is invalid.', 401)
+      }
+
+      if (status === 404) {
+        throw new AppError('Phone number is unavailable.', 404)
+      }
+
+      throw new AppError(
+        metaMessage || 'Unable to verify the WhatsApp connection.',
+        this.getMetaErrorStatus(status),
+      )
+    }
+  }
+
   private serializeAccount(account: any): any {
     const data = account.toObject ? account.toObject() : account
 
@@ -781,15 +880,20 @@ private async subscribeWabaToApp(
 
     return {
       id: data._id,
+      status: data.isConnected ? 'connected' : 'disconnected',
+      isConnected: Boolean(data.isConnected),
       businessName: data.businessName,
       displayName: data.displayName,
       phoneNumber: data.phoneNumber,
+      businessPhone: data.phoneNumber,
       phoneNumberId: data.phoneNumberId,
       businessId: data.businessId,
+      metaBusinessId: data.businessId,
       wabaId: data.wabaId,
-      isConnected: data.isConnected,
       webhookVerified: data.webhookVerified,
       tokenExpiry: data.tokenExpiry,
+      connectedAt: data.connectedAt || data.createdAt,
+      disconnectedAt: data.disconnectedAt || null,
       lastSync: data.lastSync,
     }
   }
@@ -804,6 +908,7 @@ private async subscribeWabaToApp(
         isConnected: false,
         webhookVerified: false,
         deletedAt: new Date(),
+        disconnectedAt: new Date(),
       },
     )
   }
@@ -964,19 +1069,21 @@ private async subscribeWabaToApp(
         account.wabaId,
       )
 
-      const savedMessage = await WhatsAppMessage.create({
+      const savedMessage = await this.saveOutboundMessage({
         organizationId,
         conversationId: conversation._id,
         messageId,
         from: account.phoneNumberId,
         to: normalizedPhone,
-        direction: 'outbound',
         type: messageData.type,
         content: messageData.content || {},
-        status: 'sent',
         metadata: messageData.metadata,
-        sentAt: new Date(),
       })
+
+      const preview =
+        messageData.type === 'text'
+          ? String(messageData.content || '')
+          : `[${messageData.type}]`
 
       await WhatsAppConversation.updateOne(
         {
@@ -984,6 +1091,7 @@ private async subscribeWabaToApp(
           _id: conversation._id,
         },
         {
+          lastMessage: preview.slice(0, 500),
           lastMessageAt: new Date(),
           status: 'active',
           isArchived: false,
@@ -1009,7 +1117,7 @@ private async subscribeWabaToApp(
       return {
         messageId,
         conversationId: conversation._id,
-        message: savedMessage,
+        message: this.serializeMessage(savedMessage),
       }
     } catch (error: any) {
       logger.error(
@@ -1088,6 +1196,142 @@ private async subscribeWabaToApp(
     return payload
   }
 
+  async sendCrmTextMessage(
+    organizationId: number,
+    input: {
+      text: string
+      to?: string
+      leadId?: number
+      contactId?: number
+      conversationId?: number
+    },
+  ): Promise<any> {
+    const text = String(input.text || '').trim()
+
+    if (!text) {
+      throw new AppError('Message text is required', 400)
+    }
+
+    let recipientPhone = input.to
+    let leadId = input.leadId
+    let contactId = input.contactId
+
+    if (input.conversationId) {
+      const conversation = await WhatsAppConversation.findOne({
+        organizationId,
+        _id: Number(input.conversationId),
+        deletedAt: null,
+      })
+
+      if (!conversation) {
+        throw new AppError('Conversation not found', 404)
+      }
+
+      recipientPhone = conversation.customerPhone
+      leadId = conversation.leadId || leadId
+      contactId = conversation.contactId || contactId
+    }
+
+    if (!recipientPhone && input.leadId) {
+      const lead = await Lead.findOne({
+        organizationId,
+        _id: Number(input.leadId),
+        deletedAt: null,
+      })
+
+      if (!lead) {
+        throw new AppError('Lead not found in this organization', 404)
+      }
+
+      recipientPhone = lead.phone
+      leadId = Number(lead._id)
+      contactId = lead.contactId || contactId
+    }
+
+    if (!recipientPhone && input.contactId) {
+      const contact = await Contact.findOne({
+        organizationId,
+        _id: Number(input.contactId),
+        deletedAt: null,
+      })
+
+      if (!contact) {
+        throw new AppError('Contact not found in this organization', 404)
+      }
+
+      recipientPhone = contact.phone
+      contactId = Number(contact._id)
+    }
+
+    if (!recipientPhone) {
+      throw new AppError(
+        'Provide a recipient phone, lead, contact, or conversation',
+        400,
+      )
+    }
+
+    const result = await this.sendMessage(organizationId, {
+      to: recipientPhone,
+      type: 'text',
+      content: text,
+      metadata: {
+        leadId,
+        contactId,
+      },
+    })
+
+    if (leadId || contactId) {
+      await WhatsAppConversation.updateOne(
+        {
+          organizationId,
+          _id: result.conversationId,
+        },
+        {
+          ...(leadId ? { leadId } : {}),
+          ...(contactId ? { contactId } : {}),
+        },
+      )
+    }
+
+    return result
+  }
+
+  private async saveOutboundMessage(data: {
+    organizationId: number
+    conversationId: number
+    messageId: string
+    from: string
+    to: string
+    type: WhatsAppMessageType
+    content: unknown
+    metadata?: unknown
+  }) {
+    try {
+      return await WhatsAppMessage.create({
+        organizationId: data.organizationId,
+        conversationId: data.conversationId,
+        messageId: data.messageId,
+        from: data.from,
+        to: data.to,
+        direction: 'outbound',
+        type: data.type,
+        content: data.content,
+        status: 'sent',
+        metadata: data.metadata,
+        sentAt: new Date(),
+      })
+    } catch (error: any) {
+      if (error?.code === 11000) {
+        return WhatsAppMessage.findOne({
+          organizationId: data.organizationId,
+          messageId: data.messageId,
+        })
+      }
+
+      throw error
+    }
+  }
+
   private normalizePhone(phone: string): string {
     const normalized = String(phone || '').trim()
 
@@ -1161,6 +1405,11 @@ private async subscribeWabaToApp(
     })
 
     if (conversation) {
+      await this.linkCrmRecordsToConversation(
+        organizationId,
+        normalizedPhone,
+        conversation._id,
+      )
       return conversation
     }
 
@@ -1176,34 +1425,73 @@ private async subscribeWabaToApp(
       deletedAt: null,
     })
 
+    await this.linkCrmRecordsToConversation(
+      organizationId,
+      normalizedPhone,
+      conversation._id,
+    )
+
     return conversation
   }
 
   async createConversation(
     organizationId: number,
-    contactId: number,
+    contactId?: number,
+    leadId?: number,
   ): Promise<any> {
-    const contact = await Contact.findOne({
-      _id: contactId,
-      organizationId,
-      deletedAt: null,
-    })
-
-    if (!contact) {
-      throw new AppError(
-        'Contact not found in this organization',
-        404,
-      )
+    if (!contactId && !leadId) {
+      throw new AppError('Contact ID or Lead ID is required', 400)
     }
 
-    if (!contact.phone) {
-      throw new AppError(
-        'Contact does not have a phone number',
-        400,
-      )
+    let resolvedContactId = contactId
+    let phone: string | undefined
+    let displayName: string | undefined
+    let resolvedLeadId = leadId
+
+    if (leadId) {
+      const lead = await Lead.findOne({
+        organizationId,
+        _id: Number(leadId),
+        deletedAt: null,
+      })
+
+      if (!lead) {
+        throw new AppError('Lead not found in this organization', 404)
+      }
+
+      phone = lead.phone
+      displayName =
+        `${lead.firstName || ''} ${lead.lastName || ''}`.trim() || phone
+      resolvedContactId = lead.contactId || resolvedContactId
+      resolvedLeadId = Number(lead._id)
     }
 
-    const normalizedPhone = this.normalizePhone(contact.phone)
+    if (resolvedContactId) {
+      const contact = await Contact.findOne({
+        _id: resolvedContactId,
+        organizationId,
+        deletedAt: null,
+      })
+
+      if (!contact) {
+        throw new AppError(
+          'Contact not found in this organization',
+          404,
+        )
+      }
+
+      phone = phone || contact.phone
+      displayName =
+        displayName ||
+        `${contact.firstName || ''} ${contact.lastName || ''}`.trim() ||
+        contact.phone
+    }
+
+    if (!phone) {
+      throw new AppError('A phone number is required', 400)
+    }
+
+    const normalizedPhone = this.normalizePhone(phone)
 
     const account = await WhatsAppAccount.findOne({
       organizationId,
@@ -1218,38 +1506,35 @@ private async subscribeWabaToApp(
       )
     }
 
-    const existingConversation =
-      await WhatsAppConversation.findOne({
-        organizationId,
-        contactId: contact._id,
-        customerPhone: normalizedPhone,
-        phoneNumberId: account.phoneNumberId,
-        wabaId: account.wabaId,
-        deletedAt: null,
-      })
+    const conversation = await this.getOrCreateConversation(
+      organizationId,
+      normalizedPhone,
+      account.phoneNumberId,
+      account.wabaId,
+    )
 
-    if (existingConversation) {
-      return existingConversation
+    await WhatsAppConversation.updateOne(
+      {
+        organizationId,
+        _id: conversation._id,
+      },
+      {
+        ...(resolvedContactId ? { contactId: resolvedContactId } : {}),
+        ...(resolvedLeadId ? { leadId: resolvedLeadId } : {}),
+        ...(displayName ? { contactName: displayName } : {}),
+      },
+    )
+
+    const updated = await WhatsAppConversation.findOne({
+      organizationId,
+      _id: conversation._id,
+    })
+
+    if (!updated) {
+      throw new AppError('Failed to open WhatsApp conversation', 500)
     }
 
-    const displayName =
-      `${contact.firstName || ''} ${contact.lastName || ''}`.trim() ||
-      normalizedPhone
-
-    return WhatsAppConversation.create({
-      organizationId,
-      contactId: contact._id,
-      customerPhone: normalizedPhone,
-      phoneNumberId: account.phoneNumberId,
-      wabaId: account.wabaId,
-      contactName: displayName,
-      lastMessage: 'Conversation started',
-      lastMessageAt: new Date(),
-      unreadCount: 0,
-      isArchived: false,
-      status: 'active',
-      deletedAt: null,
-    })
+    return this.serializeConversation(updated)
   }
 
   async getConversations(
@@ -1314,7 +1599,7 @@ private async subscribeWabaToApp(
     ])
 
     return {
-      data,
+      data: data.map((item) => this.serializeConversation(item)),
       total,
     }
   }
@@ -1341,6 +1626,7 @@ private async subscribeWabaToApp(
       .sort({ createdAt: -1 })
       .limit(Math.min(limit, 100))
       .lean()
+      .then((messages) => messages.map((message) => this.serializeMessage(message)))
   }
 
   async markConversationRead(
@@ -1423,19 +1709,22 @@ private async subscribeWabaToApp(
   async processWebhook(
     organizationId: number | null,
     payload: any,
+    options: { skipLog?: boolean } = {},
   ): Promise<void> {
     let webhookLog: any = null
 
     try {
-      webhookLog = await WhatsAppWebhookLog.create({
-        organizationId: organizationId || undefined,
-        event:
-          payload?.entry?.[0]?.changes?.[0]?.field ||
-          'unknown',
-        payload,
-        headers: {},
-        processed: false,
-      })
+      if (!options.skipLog) {
+        webhookLog = await WhatsAppWebhookLog.create({
+          organizationId: organizationId || undefined,
+          event:
+            payload?.entry?.[0]?.changes?.[0]?.field ||
+            'unknown',
+          payload,
+          headers: {},
+          processed: false,
+        })
+      }
 
       if (!organizationId) {
         logger.warn(
@@ -1521,7 +1810,9 @@ private async subscribeWabaToApp(
     for (const message of messages) {
       const from = message?.from
       const phoneNumberId = value.metadata?.phone_number_id
-      const wabaId = value.metadata?.waba_id
+      const wabaId =
+        value.metadata?.waba_id ||
+        value.metadata?.business_account_id
 
       if (!from || !phoneNumberId || !wabaId || !message.id) {
         logger.warn(
@@ -1588,10 +1879,11 @@ private async subscribeWabaToApp(
         },
       )
 
-      await this.linkContactToConversation(
+      await this.linkCrmRecordsToConversation(
         organizationId,
         from,
         conversation._id,
+        contactProfile?.profile?.name,
       )
     }
   }
@@ -1754,23 +2046,76 @@ private async subscribeWabaToApp(
     }
   }
 
-  private async linkContactToConversation(
+  private phoneLookupValues(phone: string): string[] {
+    const normalized = this.normalizePhone(phone)
+    const digits = normalized.replace(/\D/g, '')
+    const last10 = digits.slice(-10)
+
+    return Array.from(
+      new Set(
+        [
+          normalized,
+          digits,
+          `+${digits}`,
+          last10,
+          `+91${last10}`,
+          `91${last10}`,
+        ].filter(Boolean),
+      ),
+    )
+  }
+
+  private async linkCrmRecordsToConversation(
     organizationId: number,
     phoneNumber: string,
     conversationId: number,
+    profileName?: string,
   ): Promise<void> {
     try {
-      const normalizedPhone =
-        this.normalizePhone(phoneNumber)
+      const variants = this.phoneLookupValues(phoneNumber)
+      const last10 = variants
+        .map((value) => value.replace(/\D/g, ''))
+        .sort((a, b) => b.length - a.length)[0]
+        ?.slice(-10)
 
-      const contact = await Contact.findOne({
+      const phoneQuery = {
         organizationId,
-        phone: normalizedPhone,
         deletedAt: null,
-      })
+        $or: [
+          { phone: { $in: variants } },
+          { alternatePhone: { $in: variants } },
+          ...(last10
+            ? [
+                { phone: { $regex: `${last10}$` } },
+                { alternatePhone: { $regex: `${last10}$` } },
+              ]
+            : []),
+        ],
+      }
+
+      let contact = await Contact.findOne(phoneQuery)
+      const lead = await Lead.findOne(phoneQuery)
+
+      if (!contact && lead?.contactId) {
+        contact = await Contact.findOne({
+          organizationId,
+          _id: lead.contactId,
+          deletedAt: null,
+        })
+      }
 
       if (!contact) {
-        return
+        const nameParts = String(profileName || 'WhatsApp').trim().split(/\s+/)
+        const firstName = nameParts.shift() || 'WhatsApp'
+        const lastName = nameParts.join(' ')
+
+        contact = await Contact.create({
+          organizationId,
+          firstName,
+          lastName,
+          phone: this.normalizePhone(phoneNumber),
+          email: null,
+        })
       }
 
       await WhatsAppConversation.updateOne(
@@ -1780,14 +2125,93 @@ private async subscribeWabaToApp(
         },
         {
           contactId: contact._id,
+          ...(lead ? { leadId: lead._id } : {}),
+          ...(profileName || contact.firstName
+            ? {
+                contactName:
+                  profileName ||
+                  `${contact.firstName || ''} ${contact.lastName || ''}`.trim(),
+              }
+            : {}),
         },
       )
     } catch (error: any) {
       logger.error(
-        'Error linking WhatsApp contact to conversation:',
+        'Error linking WhatsApp conversation to CRM records:',
         error.message,
       )
     }
+  }
+
+  private serializeConversation(conversation: any) {
+    const data = conversation.toObject
+      ? conversation.toObject()
+      : conversation
+
+    return {
+      id: data._id,
+      organizationId: data.organizationId,
+      contactId: data.contactId?._id || data.contactId || null,
+      leadId: data.leadId?._id || data.leadId || null,
+      phoneNumber: data.customerPhone,
+      customerPhone: data.customerPhone,
+      contactName: data.contactName || null,
+      lastMessage: data.lastMessage || '',
+      lastMessageAt: data.lastMessageAt,
+      unreadCount: data.unreadCount || 0,
+      status: data.status,
+      assignedTo: data.assignedTo || null,
+      contact: data.contactId && typeof data.contactId === 'object'
+        ? data.contactId
+        : undefined,
+      createdAt: data.createdAt,
+      updatedAt: data.updatedAt,
+    }
+  }
+
+  private serializeMessage(message: any) {
+    const data = message?.toObject ? message.toObject() : message
+
+    let text = ''
+
+    if (typeof data.content === 'string') {
+      text = data.content
+    } else if (data.content?.text?.body) {
+      text = data.content.text.body
+    } else if (data.content?.body) {
+      text = String(data.content.body)
+    } else if (data.type && data.type !== 'text') {
+      text = `[${data.type}]`
+    }
+
+    return {
+      id: data._id,
+      conversationId: data.conversationId,
+      wamid: data.messageId,
+      messageId: data.messageId,
+      direction: data.direction,
+      senderPhone: data.from,
+      recipientPhone: data.to,
+      messageType: data.type,
+      text,
+      status: data.status,
+      errorMessage: data.errorMessage || null,
+      timestamp: data.sentAt || data.createdAt,
+      createdAt: data.createdAt,
+      updatedAt: data.updatedAt,
+    }
+  }
+
+  private async linkContactToConversation(
+    organizationId: number,
+    phoneNumber: string,
+    conversationId: number,
+  ): Promise<void> {
+    await this.linkCrmRecordsToConversation(
+      organizationId,
+      phoneNumber,
+      conversationId,
+    )
   }
 
   // ============================================================

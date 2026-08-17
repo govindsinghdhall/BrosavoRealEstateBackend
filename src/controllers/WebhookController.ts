@@ -43,7 +43,8 @@ export class WebhookController {
       const challenge = req.query['hub.challenge']
 
       const verifyToken =
-        process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN
+        process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN ||
+        process.env.META_WEBHOOK_VERIFY_TOKEN
 
       if (!verifyToken) {
         logger.error(
@@ -247,10 +248,27 @@ export class WebhookController {
                 entry: [
                   {
                     ...entry,
-                    changes: [change],
+                    changes: [
+                      {
+                        ...change,
+                        value: {
+                          ...value,
+                          metadata: {
+                            ...value.metadata,
+                            waba_id:
+                              value?.metadata?.waba_id ||
+                              value?.metadata?.business_account_id ||
+                              entry?.id ||
+                              account.wabaId,
+                            phone_number_id: String(phoneNumberId),
+                          },
+                        },
+                      },
+                    ],
                   },
                 ],
               },
+              { skipLog: true },
             )
 
             /*

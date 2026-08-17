@@ -4,6 +4,7 @@ import { applyAutoIncrement } from '../utils/autoIncrement'
 export interface IWhatsAppConversation extends Document<number> {
   organizationId: number
   contactId?: number
+  leadId?: number
   wabaId: string
   phoneNumberId: string
   customerPhone: string
@@ -36,6 +37,12 @@ const whatsAppConversationSchema =
       contactId: {
         type: Number,
         ref: 'Contact',
+        index: true,
+      },
+
+      leadId: {
+        type: Number,
+        ref: 'Lead',
         index: true,
       },
 
@@ -161,6 +168,11 @@ whatsAppConversationSchema.index({
 whatsAppConversationSchema.index({
   organizationId: 1,
   contactId: 1,
+})
+
+whatsAppConversationSchema.index({
+  organizationId: 1,
+  leadId: 1,
 })
 
 export const WhatsAppConversation =

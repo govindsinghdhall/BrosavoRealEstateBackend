@@ -74,6 +74,24 @@ router.get(
   whatsappController.getSettings,
 )
 
+router.get(
+  '/whatsapp/connection',
+  requirePermission('whatsapp.read'),
+  whatsappController.getSettings,
+)
+
+router.post(
+  '/whatsapp/connect/initiate',
+  requirePermission('whatsapp.manage'),
+  whatsappController.initiateEmbeddedSignup,
+)
+
+router.post(
+  '/whatsapp/test',
+  requirePermission('whatsapp.read'),
+  whatsappController.testConnection,
+)
+
 // Connect WhatsApp account
 router.post(
   '/whatsapp/connect',
@@ -122,6 +140,12 @@ router.post(
   '/whatsapp/send',
   requirePermission('whatsapp.send'),
   whatsappController.sendMessage,
+)
+
+router.post(
+  '/whatsapp/messages',
+  requirePermission('whatsapp.send'),
+  whatsappController.sendCrmMessage,
 )
 
 // ============================================================

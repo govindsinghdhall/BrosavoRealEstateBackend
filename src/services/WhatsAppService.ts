@@ -249,16 +249,18 @@ async completeEmbeddedSignup(
 
     // --------------------------------------------------------
     // 2. Debug the OAuth user token
+    //    debug_token requires an app access token (or an app
+    //    admin/developer user token) — not the customer token.
     // --------------------------------------------------------
+
+    const appAccessToken = `${clientId}|${clientSecret}`
 
     const debugResponse = await axios.get(
       `${this.metaApiBase}/${this.apiVersion}/debug_token`,
       {
         params: {
           input_token: oauthUserToken,
-        },
-        headers: {
-          Authorization: `Bearer ${oauthUserToken}`,
+          access_token: appAccessToken,
         },
       },
     )

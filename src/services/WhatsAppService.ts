@@ -1207,6 +1207,13 @@ private async subscribeWabaToApp(
 
       const normalizedPhone = this.normalizePhone(messageData.to)
 
+      if (this.isSameWhatsAppNumber(normalizedPhone, account.phoneNumber)) {
+        throw new AppError(
+          'Cannot send a WhatsApp message to the connected business number.',
+          400,
+        )
+      }
+
       const payload = this.buildMetaMessagePayload(
         normalizedPhone,
         messageData,
@@ -1254,7 +1261,9 @@ private async subscribeWabaToApp(
       const preview =
         messageData.type === 'text'
           ? String(messageData.content || '')
-          : `[${messageData.type}]`
+          : messageData.type === 'template'
+            ? `[Template: ${messageData.templateName || 'message'}]`
+            : `[${messageData.type}]`
 
       await WhatsAppConversation.updateOne(
         {
@@ -1301,9 +1310,23 @@ private async subscribeWabaToApp(
       }
 
       const metaError = error.response?.data?.error
+      const metaCode = String(metaError?.code || '')
+      const metaMessage = String(metaError?.error_user_msg || metaError?.message || '')
+
+      if (
+        metaCode === '131047' ||
+        /24.?hour|customer care|re-engagement|template/i.test(metaMessage)
+      ) {
+        throw new AppError(
+          metaMessage ||
+            'A template is required to start this conversation. Meta only allows free-form text inside an active customer-service window.',
+          400,
+          'TEMPLATE_REQUIRED',
+        )
+      }
 
       throw new AppError(
-        metaError?.message || 'Failed to send WhatsApp message',
+        metaMessage || 'Failed to send WhatsApp message',
         this.getMetaErrorStatus(error.response?.status),
       )
     }
@@ -1370,18 +1393,17 @@ private async subscribeWabaToApp(
   async sendCrmTextMessage(
     organizationId: number,
     input: {
-      text: string
+      text?: string
       to?: string
       leadId?: number
       contactId?: number
       conversationId?: number
+      type?: 'text' | 'template'
+      templateId?: number
+      templateVariables?: Record<string, string>
     },
   ): Promise<any> {
-    const text = String(input.text || '').trim()
-
-    if (!text) {
-      throw new AppError('Message text is required', 400)
-    }
+    const messageType = input.templateId ? 'template' : input.type || 'text'
 
     let recipientPhone = input.to
     let leadId = input.leadId
@@ -1441,15 +1463,66 @@ private async subscribeWabaToApp(
       )
     }
 
-    const result = await this.sendMessage(organizationId, {
-      to: recipientPhone,
-      type: 'text',
-      content: text,
-      metadata: {
-        leadId,
-        contactId,
-      },
-    })
+    let result
+
+    if (messageType === 'template') {
+      if (!input.templateId) {
+        throw new AppError('An approved WhatsApp template is required', 400)
+      }
+
+      const template = await WhatsAppMetaTemplate.findOne({
+        organizationId,
+        _id: Number(input.templateId),
+        deletedAt: null,
+      })
+
+      if (!template) {
+        throw new AppError('WhatsApp template not found', 404)
+      }
+
+      if (template.status !== 'APPROVED') {
+        throw new AppError(
+          'Only approved WhatsApp templates can start a business conversation.',
+          400,
+        )
+      }
+
+      result = await this.sendMessage(organizationId, {
+        to: recipientPhone,
+        type: 'template',
+        content: {
+          name: template.name,
+          language: template.language,
+        },
+        templateName: template.name,
+        templateLanguage: template.language || 'en_US',
+        templateComponents: this.buildCampaignTemplateComponents(
+          template.components || [],
+          input.templateVariables || {},
+        ),
+        metadata: {
+          leadId,
+          contactId,
+          templateId: template._id,
+        },
+      })
+    } else {
+      const text = String(input.text || '').trim()
+
+      if (!text) {
+        throw new AppError('Message text is required', 400)
+      }
+
+      result = await this.sendMessage(organizationId, {
+        to: recipientPhone,
+        type: 'text',
+        content: text,
+        metadata: {
+          leadId,
+          contactId,
+        },
+      })
+    }
 
     if (leadId || contactId) {
       await WhatsAppConversation.updateOne(
@@ -1541,7 +1614,24 @@ private async subscribeWabaToApp(
     )
   }
 
-  private getMetaErrorStatus(status?: number): number {
+  private isSameWhatsAppNumber(left: string, right?: string | null): boolean {
+    if (!left || !right) {
+      return false
+    }
+
+    const a = String(left).replace(/\D/g, '')
+    const b = String(right).replace(/\D/g, '')
+
+    if (!a || !b) {
+      return false
+    }
+
+    if (a === b) {
+      return true
+    }
+
+    return a.length >= 10 && b.length >= 10 && a.slice(-10) === b.slice(-10)
+  }
     if (!status) {
       return 502
     }
@@ -1580,6 +1670,8 @@ private async subscribeWabaToApp(
         organizationId,
         normalizedPhone,
         conversation._id,
+        undefined,
+        false,
       )
       return conversation
     }
@@ -1600,6 +1692,8 @@ private async subscribeWabaToApp(
       organizationId,
       normalizedPhone,
       conversation._id,
+      undefined,
+      false,
     )
 
     return conversation
@@ -2241,6 +2335,7 @@ private async subscribeWabaToApp(
     phoneNumber: string,
     conversationId: number,
     profileName?: string,
+    createMissingContact = true,
   ): Promise<void> {
     try {
       const variants = this.phoneLookupValues(phoneNumber)
@@ -2275,7 +2370,7 @@ private async subscribeWabaToApp(
         })
       }
 
-      if (!contact) {
+      if (!contact && createMissingContact) {
         const nameParts = String(profileName || 'WhatsApp').trim().split(/\s+/)
         const firstName = nameParts.shift() || 'WhatsApp'
         const lastName = nameParts.join(' ')
@@ -2289,19 +2384,23 @@ private async subscribeWabaToApp(
         })
       }
 
+      if (!contact && !lead) {
+        return
+      }
+
       await WhatsAppConversation.updateOne(
         {
           organizationId,
           _id: conversationId,
         },
         {
-          contactId: contact._id,
+          ...(contact ? { contactId: contact._id } : {}),
           ...(lead ? { leadId: lead._id } : {}),
-          ...(profileName || contact.firstName
+          ...(profileName || contact?.firstName
             ? {
                 contactName:
                   profileName ||
-                  `${contact.firstName || ''} ${contact.lastName || ''}`.trim(),
+                  `${contact?.firstName || ''} ${contact?.lastName || ''}`.trim(),
               }
             : {}),
         },
@@ -2351,6 +2450,8 @@ private async subscribeWabaToApp(
       text = data.content.text.body
     } else if (data.content?.body) {
       text = String(data.content.body)
+    } else if (data.content?.name) {
+      text = `[Template: ${data.content.name}]`
     } else if (data.type && data.type !== 'text') {
       text = `[${data.type}]`
     }

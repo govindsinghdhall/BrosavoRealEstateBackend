@@ -262,13 +262,17 @@ async sendCrmMessage(
 ) {
   try {
     const { organizationId } = req.auth!
-    const { text, to, leadId, contactId, conversationId } = req.body
+    const { text, to, leadId, contactId, conversationId, type, templateId, templateVariables } =
+      req.body
 
     const result = await whatsappService.sendCrmTextMessage(
       organizationId,
       {
         text,
         to,
+        type,
+        templateId: templateId ? Number(templateId) : undefined,
+        templateVariables,
         leadId: leadId ? Number(leadId) : undefined,
         contactId: contactId ? Number(contactId) : undefined,
         conversationId: conversationId

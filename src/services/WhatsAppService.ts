@@ -1463,6 +1463,48 @@ private async subscribeWabaToApp(
       )
     }
 
+    // Auto-associate existing CRM contact/lead by phone when the caller
+    // only supplied a recipient number. Never create contacts here.
+    if (!leadId || !contactId) {
+      const variants = this.phoneLookupValues(recipientPhone)
+      const last10 = variants
+        .map((value) => value.replace(/\D/g, ''))
+        .sort((a, b) => b.length - a.length)[0]
+        ?.slice(-10)
+
+      const phoneQuery = {
+        organizationId,
+        deletedAt: null,
+        $or: [
+          { phone: { $in: variants } },
+          { alternatePhone: { $in: variants } },
+          ...(last10
+            ? [
+                { phone: { $regex: `${last10}$` } },
+                { alternatePhone: { $regex: `${last10}$` } },
+              ]
+            : []),
+        ],
+      }
+
+      if (!contactId) {
+        const contact = await Contact.findOne(phoneQuery)
+        if (contact) {
+          contactId = Number(contact._id)
+        }
+      }
+
+      if (!leadId) {
+        const lead = await Lead.findOne(phoneQuery)
+        if (lead) {
+          leadId = Number(lead._id)
+          if (!contactId && lead.contactId) {
+            contactId = Number(lead.contactId)
+          }
+        }
+      }
+    }
+
     let result
 
     if (messageType === 'template') {
@@ -1525,6 +1567,34 @@ private async subscribeWabaToApp(
     }
 
     if (leadId || contactId) {
+      let contactName: string | undefined
+
+      if (contactId) {
+        const contact = await Contact.findOne({
+          organizationId,
+          _id: contactId,
+          deletedAt: null,
+        })
+        if (contact) {
+          contactName =
+            `${contact.firstName || ''} ${contact.lastName || ''}`.trim() ||
+            undefined
+        }
+      }
+
+      if (!contactName && leadId) {
+        const lead = await Lead.findOne({
+          organizationId,
+          _id: leadId,
+          deletedAt: null,
+        })
+        if (lead) {
+          contactName =
+            `${lead.firstName || ''} ${lead.lastName || ''}`.trim() ||
+            undefined
+        }
+      }
+
       await WhatsAppConversation.updateOne(
         {
           organizationId,
@@ -1533,6 +1603,7 @@ private async subscribeWabaToApp(
         {
           ...(leadId ? { leadId } : {}),
           ...(contactId ? { contactId } : {}),
+          ...(contactName ? { contactName } : {}),
         },
       )
     }
@@ -1632,6 +1703,8 @@ private async subscribeWabaToApp(
 
     return a.length >= 10 && b.length >= 10 && a.slice(-10) === b.slice(-10)
   }
+
+  private getMetaErrorStatus(status?: number): number {
     if (!status) {
       return 502
     }

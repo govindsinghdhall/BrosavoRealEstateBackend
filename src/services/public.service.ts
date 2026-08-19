@@ -4,7 +4,6 @@ import { LeadSource } from '../models/LeadSource'
 import { User } from '../models/User'
 import { Role } from '../models/Role'
 import { NotFoundError } from '../utils/errors'
-import { resolvePublicOrganizationId } from '../config/publicSite'
 import { createLead } from './lead.service'
 
 function publicPropertyFilter(organizationId: number) {
@@ -148,7 +147,9 @@ export function serializePublicProperty(property: IProperty) {
   }
 }
 
-export async function listPublicProperties(options: {
+export async function listPublicProperties(
+  organizationId: number,
+  options: {
   page: number
   limit: number
   search?: string
@@ -180,7 +181,6 @@ export async function listPublicProperties(options: {
   sortBy?: string
   sortOrder?: 'asc' | 'desc'
 }) {
-  const organizationId = await resolvePublicOrganizationId()
   const filter: Record<string, unknown> = publicPropertyFilter(organizationId)
 
   applyCategoryFilter(filter, options.category)
@@ -259,8 +259,7 @@ export async function listPublicProperties(options: {
   return { properties, total }
 }
 
-export async function getPublicPropertyById(propertyId: number) {
-  const organizationId = await resolvePublicOrganizationId()
+export async function getPublicPropertyById(organizationId: number, propertyId: number) {
   const property = await Property.findOne({
     _id: propertyId,
     ...publicPropertyFilter(organizationId),
@@ -273,9 +272,7 @@ export async function getPublicPropertyById(propertyId: number) {
   return property
 }
 
-export async function listPublicBuilders() {
-  const organizationId = await resolvePublicOrganizationId()
-
+export async function listPublicBuilders(organizationId: number) {
   const builders = await Property.aggregate([
     { $match: { ...publicPropertyFilter(organizationId), builderName: { $nin: [null, ''] } } },
     { $group: { _id: '$builderName', count: { $sum: 1 } } },
@@ -286,8 +283,7 @@ export async function listPublicBuilders() {
   return builders as { name: string; count: number }[]
 }
 
-export async function getPublicStats() {
-  const organizationId = await resolvePublicOrganizationId()
+export async function getPublicStats(organizationId: number) {
   const totalProperties = await Property.countDocuments(publicPropertyFilter(organizationId))
   return { totalProperties }
 }
@@ -323,7 +319,9 @@ async function resolvePublicLeadCreatorId(organizationId: number) {
   return user._id
 }
 
-export async function submitPublicInquiry(payload: {
+export async function submitPublicInquiry(
+  organizationId: number,
+  payload: {
   firstName: string
   lastName: string
   email?: string
@@ -333,7 +331,6 @@ export async function submitPublicInquiry(payload: {
   budget?: number
   propertyId?: string
 }) {
-  const organizationId = await resolvePublicOrganizationId()
   const [sourceId, createdById] = await Promise.all([
     resolveWebsiteLeadSourceId(organizationId),
     resolvePublicLeadCreatorId(organizationId),
@@ -345,7 +342,7 @@ export async function submitPublicInquiry(payload: {
   }
 
   if (parsedPropertyId) {
-    await getPublicPropertyById(parsedPropertyId)
+    await getPublicPropertyById(organizationId, parsedPropertyId)
   }
 
   const lead = await createLead(organizationId, createdById, {

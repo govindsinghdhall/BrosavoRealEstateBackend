@@ -57,4 +57,15 @@ const organizationSchema = new Schema<IOrganization>(
 
 applyAutoIncrement(organizationSchema, 'Organization')
 
+organizationSchema.index(
+  { 'settings.websiteApiKey': 1 },
+  {
+    unique: true,
+    name: 'unique_websiteApiKey',
+    partialFilterExpression: {
+      'settings.websiteApiKey': { $exists: true, $type: 'string', $gt: '' },
+    },
+  },
+)
+
 export const Organization = model<IOrganization>('Organization', organizationSchema)

@@ -1,12 +1,12 @@
-import { Router } from 'express'
-import { WhatsAppController } from '../controllers/WhatsAppController'
-import { WebhookController } from '../controllers/WebhookController'
-import { authenticate, requirePermission } from '../middleware/auth'
+import { Router } from "express";
+import { WhatsAppController } from "../controllers/WhatsAppController";
+import { WebhookController } from "../controllers/WebhookController";
+import { authenticate, requirePermission } from "../middleware/auth";
 
-const router = Router()
+const router = Router();
 
-const whatsappController = new WhatsAppController()
-const webhookController = new WebhookController()
+const whatsappController = new WhatsAppController();
+const webhookController = new WebhookController();
 
 // ============================================================
 // PUBLIC ROUTES
@@ -26,15 +26,9 @@ const webhookController = new WebhookController()
 // phone_number_id / WABA information in the webhook payload.
 //
 
-router.get(
-  '/webhooks/whatsapp',
-  webhookController.verifyWebhook,
-)
+router.get("/webhooks/whatsapp", webhookController.verifyWebhook);
 
-router.post(
-  '/webhooks/whatsapp',
-  webhookController.receiveWebhook,
-)
+router.post("/webhooks/whatsapp", webhookController.receiveWebhook);
 
 // ============================================================
 // META OAUTH CALLBACK
@@ -45,16 +39,13 @@ router.post(
 // Meta OAuth redirects here after a user connects WhatsApp.
 //
 
-router.get(
-  '/whatsapp/callback',
-  whatsappController.oauthCallback,
-)
+router.get("/whatsapp/callback", whatsappController.oauthCallback);
 
 // ============================================================
 // PROTECTED ROUTES
 // ============================================================
 
-router.use(authenticate)
+router.use(authenticate);
 
 // ============================================================
 // WHATSAPP CONNECTION / OAUTH
@@ -62,56 +53,56 @@ router.use(authenticate)
 
 // Generate Meta OAuth URL
 router.get(
-  '/whatsapp/auth-url',
-  requirePermission('whatsapp.manage'),
+  "/whatsapp/auth-url",
+  requirePermission("whatsapp.manage"),
   whatsappController.getAuthUrl,
-)
+);
 
 // Get connected WhatsApp account settings
 router.get(
-  '/whatsapp/settings',
-  requirePermission('whatsapp.read'),
+  "/whatsapp/settings",
+  requirePermission("whatsapp.read"),
   whatsappController.getSettings,
-)
+);
 
 router.get(
-  '/whatsapp/connection',
-  requirePermission('whatsapp.read'),
+  "/whatsapp/connection",
+  requirePermission("whatsapp.read"),
   whatsappController.getSettings,
-)
+);
 
 router.post(
-  '/whatsapp/connect/initiate',
-  requirePermission('whatsapp.manage'),
+  "/whatsapp/connect/initiate",
+  requirePermission("whatsapp.manage"),
   whatsappController.initiateEmbeddedSignup,
-)
+);
 
 router.post(
-  '/whatsapp/test',
-  requirePermission('whatsapp.read'),
+  "/whatsapp/test",
+  requirePermission("whatsapp.read"),
   whatsappController.testConnection,
-)
+);
 
 // Connect WhatsApp account
 router.post(
-  '/whatsapp/connect',
-  requirePermission('whatsapp.manage'),
+  "/whatsapp/connect",
+  requirePermission("whatsapp.manage"),
   whatsappController.connectAccount,
-)
+);
 
 // Disconnect WhatsApp account
 router.post(
-  '/whatsapp/disconnect',
-  requirePermission('whatsapp.manage'),
+  "/whatsapp/disconnect",
+  requirePermission("whatsapp.manage"),
   whatsappController.disconnectAccount,
-)
+);
 
 // Refresh WhatsApp account/token information
 router.post(
-  '/whatsapp/refresh',
-  requirePermission('whatsapp.manage'),
+  "/whatsapp/refresh",
+  requirePermission("whatsapp.manage"),
   whatsappController.refreshAccount,
-)
+);
 
 // ============================================================
 // TEMPLATES
@@ -119,17 +110,17 @@ router.post(
 
 // Get Meta WhatsApp templates
 router.get(
-  '/whatsapp/templates',
-  requirePermission('whatsapp.read'),
+  "/whatsapp/templates",
+  requirePermission("whatsapp.read"),
   whatsappController.getTemplates,
-)
+);
 
 // Sync templates from Meta
 router.post(
-  '/whatsapp/templates/sync',
-  requirePermission('whatsapp.manage'),
+  "/whatsapp/templates/sync",
+  requirePermission("whatsapp.manage"),
   whatsappController.syncTemplates,
-)
+);
 
 // ============================================================
 // INDIVIDUAL MESSAGES
@@ -137,16 +128,16 @@ router.post(
 
 // Send a single WhatsApp message
 router.post(
-  '/whatsapp/send',
-  requirePermission('whatsapp.send'),
+  "/whatsapp/send",
+  requirePermission("whatsapp.send"),
   whatsappController.sendMessage,
-)
+);
 
 router.post(
-  '/whatsapp/messages',
-  requirePermission('whatsapp.send'),
+  "/whatsapp/messages",
+  requirePermission("whatsapp.send"),
   whatsappController.sendCrmMessage,
-)
+);
 
 // ============================================================
 // CONVERSATIONS / INBOX
@@ -154,52 +145,52 @@ router.post(
 
 // List conversations
 router.get(
-  '/whatsapp/conversations',
-  requirePermission('whatsapp.read'),
+  "/whatsapp/conversations",
+  requirePermission("whatsapp.read"),
   whatsappController.getConversations,
-)
+);
 
 // Create/find conversation
 router.post(
-  '/whatsapp/conversations',
-  requirePermission('whatsapp.send'),
+  "/whatsapp/conversations",
+  requirePermission("whatsapp.send"),
   whatsappController.createConversation,
-)
+);
 
 // Get conversation messages
 router.get(
-  '/whatsapp/conversations/:conversationId/messages',
-  requirePermission('whatsapp.read'),
+  "/whatsapp/conversations/:conversationId/messages",
+  requirePermission("whatsapp.read"),
   whatsappController.getConversationMessages,
-)
+);
 
 // Mark conversation as read
 router.post(
-  '/whatsapp/conversations/:conversationId/read',
-  requirePermission('whatsapp.send'),
+  "/whatsapp/conversations/:conversationId/read",
+  requirePermission("whatsapp.send"),
   whatsappController.markRead,
-)
+);
 
 // Assign conversation to CRM user
 router.post(
-  '/whatsapp/conversations/:conversationId/assign',
-  requirePermission('whatsapp.manage'),
+  "/whatsapp/conversations/:conversationId/assign",
+  requirePermission("whatsapp.manage"),
   whatsappController.assignConversation,
-)
+);
 
 // Archive conversation
 router.post(
-  '/whatsapp/conversations/:conversationId/archive',
-  requirePermission('whatsapp.manage'),
+  "/whatsapp/conversations/:conversationId/archive",
+  requirePermission("whatsapp.manage"),
   whatsappController.archiveConversation,
-)
+);
 
 // Get unread conversation count
 router.get(
-  '/whatsapp/unread',
-  requirePermission('whatsapp.read'),
+  "/whatsapp/unread",
+  requirePermission("whatsapp.read"),
   whatsappController.getUnreadCount,
-)
+);
 
 // ============================================================
 // BULK WHATSAPP CAMPAIGNS
@@ -207,45 +198,45 @@ router.get(
 
 // List campaigns
 router.get(
-  '/whatsapp/campaigns',
-  requirePermission('whatsapp.campaign'),
+  "/whatsapp/campaigns",
+  requirePermission("whatsapp.campaign"),
   whatsappController.getCampaigns,
-)
+);
 
 // Create / schedule bulk campaign
 router.post(
-  '/whatsapp/campaigns',
-  requirePermission('whatsapp.campaign'),
+  "/whatsapp/campaigns",
+  requirePermission("whatsapp.campaign"),
   whatsappController.createCampaign,
-)
+);
 
 // Get campaign statistics
 router.get(
-  '/whatsapp/campaigns/:campaignId/stats',
-  requirePermission('whatsapp.campaign'),
+  "/whatsapp/campaigns/:campaignId/stats",
+  requirePermission("whatsapp.campaign"),
   whatsappController.getCampaignStats,
-)
+);
 
 // Get campaign recipients
 router.get(
-  '/whatsapp/campaigns/:campaignId/recipients',
-  requirePermission('whatsapp.campaign'),
+  "/whatsapp/campaigns/:campaignId/recipients",
+  requirePermission("whatsapp.campaign"),
   whatsappController.getCampaignRecipients,
-)
+);
 
 // Cancel campaign
 router.post(
-  '/whatsapp/campaigns/:campaignId/cancel',
-  requirePermission('whatsapp.campaign'),
+  "/whatsapp/campaigns/:campaignId/cancel",
+  requirePermission("whatsapp.campaign"),
   whatsappController.cancelCampaign,
-)
+);
 
 // Delete campaign
 router.delete(
-  '/whatsapp/campaigns/:campaignId',
-  requirePermission('whatsapp.campaign'),
+  "/whatsapp/campaigns/:campaignId",
+  requirePermission("whatsapp.campaign"),
   whatsappController.deleteCampaign,
-)
+);
 
 // ============================================================
 // WEBHOOK LOGS
@@ -253,10 +244,10 @@ router.delete(
 
 // View webhook logs
 router.get(
-  '/whatsapp/webhook-logs',
-  requirePermission('whatsapp.manage'),
+  "/whatsapp/webhook-logs",
+  requirePermission("whatsapp.manage"),
   webhookController.getWebhookLogs,
-)
+);
 
 // ============================================================
 // META EMBEDDED SIGNUP
@@ -264,9 +255,9 @@ router.get(
 
 // Complete Meta Embedded Signup
 router.post(
-  '/whatsapp/embedded-signup',
-  requirePermission('whatsapp.manage'),
+  "/whatsapp/embedded-signup",
+  requirePermission("whatsapp.manage"),
   whatsappController.completeEmbeddedSignup,
-)
+);
 
-export default router
+export default router;

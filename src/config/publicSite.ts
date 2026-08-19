@@ -1,21 +1,10 @@
-import { Organization } from '../models/Organization'
-import { NotFoundError } from '../utils/errors'
-
-const DEFAULT_SLUG = process.env.PUBLIC_ORGANIZATION_SLUG || 'durga-property'
-
-let cachedOrganizationId: number | null = null
-
+/**
+ * @deprecated Public `/api/v1/public/*` routes resolve the organization per
+ * request via `x-website-api-key` and/or `organizationId`.
+ * Do not use this helper for those endpoints.
+ */
 export async function resolvePublicOrganizationId(): Promise<number> {
-  if (cachedOrganizationId) return cachedOrganizationId
-
-  const organization =
-    (await Organization.findOne({ slug: DEFAULT_SLUG })) ??
-    (await Organization.findOne().sort({ _id: 1 }))
-
-  if (!organization) {
-    throw new NotFoundError('Public site organization is not configured')
-  }
-
-  cachedOrganizationId = organization._id
-  return cachedOrganizationId
+  throw new Error(
+    'resolvePublicOrganizationId is deprecated. Public routes must use req.publicOrganizationId.',
+  )
 }

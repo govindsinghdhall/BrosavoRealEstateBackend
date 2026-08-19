@@ -5,6 +5,7 @@ import { Role } from '../models/Role'
 import { User } from '../models/User'
 import { seedOrganizationDefaults } from '../services/organization.service'
 import { hashPassword } from '../utils/password'
+import { generateWebsiteApiKey } from '../utils/websiteApiKey'
 
 config()
 
@@ -68,7 +69,7 @@ export async function seedDemoOrganization() {
     name: DEMO_ORG_NAME,
     slug: DEMO_ORG_SLUG,
     email: DEMO_EMAIL,
-    settings: { tagline: 'Your real estate business, organized.' },
+    settings: { tagline: 'Your real estate business, organized.', websiteApiKey: generateWebsiteApiKey() },
   })
 
   await seedOrganizationDefaults(organization._id)

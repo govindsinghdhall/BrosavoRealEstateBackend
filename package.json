@@ -12,6 +12,7 @@
     "start": "node dist/index.js",
     "render:build": "npm install --include=dev && npm run build",
     "seed": "tsx src/scripts/seed.ts",
+    "test": "tsx --test src/services/publicTenant.service.test.ts src/services/whatsapp.payload.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [

@@ -49,14 +49,16 @@ router.use('/site-visits', siteVisitsRoutes)
 router.use('/bookings', bookingsRoutes)
 router.use('/reports', reportsRoutes)
 
+// Public website APIs (must be registered before the WhatsApp router).
+// WhatsApp mounts at `/` and later calls `router.use(authenticate)`, which
+// would otherwise 401 every unmatched path including `/public/*`.
+router.use('/public', publicRoutes)
+
 // WhatsApp routes (includes /webhooks and /whatsapp)
 router.use(whatsappRoutes)
 
 // Marketing routes
 router.use('/marketing', marketingRoutes)
-
-// Public routes
-router.use('/public', publicRoutes)
 
 console.log('✅ All routes registered successfully')
 

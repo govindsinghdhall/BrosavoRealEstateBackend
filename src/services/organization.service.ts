@@ -3,6 +3,7 @@ import { LeadSource } from '../models/LeadSource'
 import { Organization, type IOrganization } from '../models/Organization'
 import { Role } from '../models/Role'
 import { slugify } from '../utils/slug'
+import { generateWebsiteApiKey } from '../utils/websiteApiKey'
 
 const DEFAULT_LEAD_SOURCES = [
   { name: 'Website', type: 'WEBSITE' },
@@ -40,6 +41,7 @@ export async function createOrganizationForSignup(input: {
     phone: input.phone ?? null,
     settings: {
       tagline: 'Your real estate business, organized.',
+      websiteApiKey: generateWebsiteApiKey(),
     },
   })
 
@@ -115,7 +117,19 @@ export async function updateOrganizationById(
   if (payload.email !== undefined) updates.email = payload.email?.toLowerCase() ?? null
   if (payload.phone !== undefined) updates.phone = payload.phone
   if (payload.address !== undefined) updates.address = payload.address
-  if (payload.settings !== undefined) updates.settings = payload.settings
+  const current = await Organization.findById(organizationId)
+  if (!current) {
+    const { NotFoundError } = await import('../utils/errors')
+    throw new NotFoundError('Organization not found')
+  }
+
+  if (payload.settings !== undefined) {
+    updates.settings = {
+      ...(current.settings ?? {}),
+      ...payload.settings,
+      websiteApiKey: current.settings?.websiteApiKey ?? generateWebsiteApiKey(),
+    }
+  }
 
   const organization = await Organization.findOneAndUpdate(
     { _id: organizationId },

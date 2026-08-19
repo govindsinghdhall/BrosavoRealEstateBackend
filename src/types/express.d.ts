@@ -9,6 +9,8 @@ declare global {
   namespace Express {
     interface Request {
       auth?: JwtPayload
+      /** Set by public website tenant middleware for /api/v1/public/* */
+      publicOrganizationId?: number
     }
   }
 }

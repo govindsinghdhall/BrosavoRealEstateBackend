@@ -10,6 +10,7 @@ import {
 } from '../services/public.service'
 import { buildPaginationMeta, success, successPaginated } from '../utils/response'
 import { parseId, parsePagination } from '../utils/pagination'
+import { AppError } from '../utils/errors'
 
 function queryString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
@@ -19,6 +20,13 @@ function queryBoolean(value: unknown): boolean | undefined {
   if (value === 'true' || value === true) return true
   if (value === 'false' || value === false) return false
   return undefined
+}
+
+function requirePublicOrganizationId(req: Request): number {
+  if (req.publicOrganizationId === undefined) {
+    throw new AppError('organizationId or x-website-api-key is required', 400)
+  }
+  return req.publicOrganizationId
 }
 
 const inquirySchema = z.object({
@@ -34,8 +42,9 @@ const inquirySchema = z.object({
 
 export async function listPublicSiteProperties(req: Request, res: Response, next: NextFunction) {
   try {
+    const organizationId = requirePublicOrganizationId(req)
     const { page, limit, search, sortBy, sortOrder } = parsePagination(req)
-    const { properties, total } = await listPublicProperties({
+    const { properties, total } = await listPublicProperties(organizationId, {
       page,
       limit,
       search,
@@ -80,25 +89,28 @@ export async function listPublicSiteProperties(req: Request, res: Response, next
 
 export async function getPublicSiteProperty(req: Request, res: Response, next: NextFunction) {
   try {
-    const property = await getPublicPropertyById(parseId(req.params.id))
+    const organizationId = requirePublicOrganizationId(req)
+    const property = await getPublicPropertyById(organizationId, parseId(req.params.id))
     return success(res, serializePublicProperty(property))
   } catch (error) {
     next(error)
   }
 }
 
-export async function listPublicSiteBuilders(_req: Request, res: Response, next: NextFunction) {
+export async function listPublicSiteBuilders(req: Request, res: Response, next: NextFunction) {
   try {
-    const builders = await listPublicBuilders()
+    const organizationId = requirePublicOrganizationId(req)
+    const builders = await listPublicBuilders(organizationId)
     return success(res, builders)
   } catch (error) {
     next(error)
   }
 }
 
-export async function getPublicSiteStats(_req: Request, res: Response, next: NextFunction) {
+export async function getPublicSiteStats(req: Request, res: Response, next: NextFunction) {
   try {
-    const stats = await getPublicStats()
+    const organizationId = requirePublicOrganizationId(req)
+    const stats = await getPublicStats(organizationId)
     return success(res, stats)
   } catch (error) {
     next(error)
@@ -107,8 +119,9 @@ export async function getPublicSiteStats(_req: Request, res: Response, next: Nex
 
 export async function createPublicInquiry(req: Request, res: Response, next: NextFunction) {
   try {
+    const organizationId = requirePublicOrganizationId(req)
     const payload = inquirySchema.parse(req.body)
-    const inquiry = await submitPublicInquiry({
+    const inquiry = await submitPublicInquiry(organizationId, {
       ...payload,
       email: payload.email || undefined,
     })

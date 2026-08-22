@@ -25,6 +25,17 @@ export function getMetaApiBase(): string {
   return process.env.WHATSAPP_API_BASE_URL || 'https://graph.facebook.com'
 }
 
+/**
+ * Build a Meta Graph API URL using the configured API version.
+ * Accepts paths like "123/message_templates" or "/123/message_templates".
+ */
+export function getMetaGraphUrl(path: string): string {
+  const base = getMetaApiBase().replace(/\/$/, '')
+  const version = getMetaGraphApiVersion().replace(/^\/|\/$/g, '')
+  const normalizedPath = String(path || '').replace(/^\//, '')
+  return `${base}/${version}/${normalizedPath}`
+}
+
 export function getEncryptionKeySource(): string | undefined {
   return process.env.ENCRYPTION_KEY || process.env.META_ENCRYPTION_KEY
 }

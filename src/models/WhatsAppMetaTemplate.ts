@@ -1,62 +1,51 @@
 import { Schema, model, type Document } from 'mongoose'
 import { applyAutoIncrement } from '../utils/autoIncrement'
 
+export type WhatsAppTemplateCategory =
+  | 'MARKETING'
+  | 'UTILITY'
+  | 'AUTHENTICATION'
+
+export type WhatsAppTemplateStatus =
+  | 'DRAFT'
+  | 'PENDING'
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'PAUSED'
+  | 'DISABLED'
+
+export interface IWhatsAppMetaTemplateComponent {
+  type: 'HEADER' | 'BODY' | 'FOOTER' | 'BUTTONS'
+  text?: string
+  format?: 'TEXT' | 'IMAGE' | 'VIDEO' | 'DOCUMENT'
+  example?: unknown
+  buttons?: Array<{
+    type:
+      | 'PHONE_NUMBER'
+      | 'URL'
+      | 'QUICK_REPLY'
+      | 'COPY_CODE'
+      | 'FLOW'
+    text: string
+    url?: string
+    phone_number?: string
+    example?: string[]
+  }>
+}
+
 export interface IWhatsAppMetaTemplate
   extends Document<number> {
   organizationId: number
-  templateId: string
+  /** Meta template ID. Null for local drafts not yet submitted. */
+  templateId: string | null
   name: string
-  category:
-    | 'MARKETING'
-    | 'UTILITY'
-    | 'AUTHENTICATION'
+  category: WhatsAppTemplateCategory
   language: string
-  status:
-    | 'APPROVED'
-    | 'PENDING'
-    | 'REJECTED'
-    | 'PAUSED'
-    | 'DISABLED'
-  quality:
-    | 'GREEN'
-    | 'YELLOW'
-    | 'RED'
-    | 'UNKNOWN'
-
-  components: Array<{
-    type:
-      | 'HEADER'
-      | 'BODY'
-      | 'FOOTER'
-      | 'BUTTONS'
-
-    text?: string
-
-    format?:
-      | 'TEXT'
-      | 'IMAGE'
-      | 'VIDEO'
-      | 'DOCUMENT'
-
-    example?: any
-
-    buttons?: Array<{
-      type:
-        | 'PHONE_NUMBER'
-        | 'URL'
-        | 'QUICK_REPLY'
-        | 'COPY_CODE'
-        | 'FLOW'
-
-      text: string
-      url?: string
-      phone_number?: string
-      example?: string[]
-    }>
-  }>
-
+  status: WhatsAppTemplateStatus
+  quality: 'GREEN' | 'YELLOW' | 'RED' | 'UNKNOWN'
+  components: IWhatsAppMetaTemplateComponent[]
   variables: string[]
-
+  rejectionReason: string | null
   deletedAt: Date | null
   createdAt: Date
   updatedAt: Date
@@ -77,15 +66,13 @@ const whatsAppMetaTemplateSchema =
       },
 
       /*
-       * This is Meta's template ID.
-       *
-       * Do NOT make this globally unique because this is a
-       * multi-tenant CRM and every organization must be scoped
-       * independently.
+       * Meta's template ID.
+       * Null for CRM drafts that have not been submitted yet.
        */
       templateId: {
         type: String,
-        required: true,
+        required: false,
+        default: null,
         trim: true,
       },
 
@@ -98,11 +85,7 @@ const whatsAppMetaTemplateSchema =
 
       category: {
         type: String,
-        enum: [
-          'MARKETING',
-          'UTILITY',
-          'AUTHENTICATION',
-        ],
+        enum: ['MARKETING', 'UTILITY', 'AUTHENTICATION'],
         required: true,
       },
 
@@ -115,8 +98,9 @@ const whatsAppMetaTemplateSchema =
       status: {
         type: String,
         enum: [
-          'APPROVED',
+          'DRAFT',
           'PENDING',
+          'APPROVED',
           'REJECTED',
           'PAUSED',
           'DISABLED',
@@ -126,12 +110,7 @@ const whatsAppMetaTemplateSchema =
 
       quality: {
         type: String,
-        enum: [
-          'GREEN',
-          'YELLOW',
-          'RED',
-          'UNKNOWN',
-        ],
+        enum: ['GREEN', 'YELLOW', 'RED', 'UNKNOWN'],
         default: 'UNKNOWN',
       },
 
@@ -139,12 +118,7 @@ const whatsAppMetaTemplateSchema =
         {
           type: {
             type: String,
-            enum: [
-              'HEADER',
-              'BODY',
-              'FOOTER',
-              'BUTTONS',
-            ],
+            enum: ['HEADER', 'BODY', 'FOOTER', 'BUTTONS'],
             required: true,
           },
 
@@ -155,12 +129,7 @@ const whatsAppMetaTemplateSchema =
 
           format: {
             type: String,
-            enum: [
-              'TEXT',
-              'IMAGE',
-              'VIDEO',
-              'DOCUMENT',
-            ],
+            enum: ['TEXT', 'IMAGE', 'VIDEO', 'DOCUMENT'],
           },
 
           example: {
@@ -203,16 +172,15 @@ const whatsAppMetaTemplateSchema =
         },
       ],
 
-      /*
-       * Extracted variables from Meta template components.
-       *
-       * Example:
-       *
-       * ["1", "2", "customer_name"]
-       */
       variables: {
         type: [String],
         default: [],
+      },
+
+      rejectionReason: {
+        type: String,
+        default: null,
+        trim: true,
       },
 
       deletedAt: {
@@ -231,12 +199,7 @@ applyAutoIncrement(
   'WhatsAppMetaTemplate',
 )
 
-// ============================================================
-// INDEXES
-// ============================================================
-
-// Same Meta template ID can safely exist in separate
-// organizations.
+// Meta template IDs are unique per organization (drafts have null templateId).
 whatsAppMetaTemplateSchema.index(
   {
     organizationId: 1,
@@ -244,29 +207,38 @@ whatsAppMetaTemplateSchema.index(
   },
   {
     unique: true,
+    partialFilterExpression: {
+      templateId: { $type: 'string' },
+      deletedAt: null,
+    },
   },
 )
 
-// Useful for template selection in the CRM.
-whatsAppMetaTemplateSchema.index({
-  organizationId: 1,
-  name: 1,
-  language: 1,
-})
+// One active template per name + language per organization.
+whatsAppMetaTemplateSchema.index(
+  {
+    organizationId: 1,
+    name: 1,
+    language: 1,
+  },
+  {
+    unique: true,
+    partialFilterExpression: {
+      deletedAt: null,
+    },
+  },
+)
 
-// Campaign creation only allows APPROVED templates.
 whatsAppMetaTemplateSchema.index({
   organizationId: 1,
   status: 1,
 })
 
-// Template filtering by category.
 whatsAppMetaTemplateSchema.index({
   organizationId: 1,
   category: 1,
 })
 
-// Soft-delete aware queries.
 whatsAppMetaTemplateSchema.index({
   organizationId: 1,
   deletedAt: 1,

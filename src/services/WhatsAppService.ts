@@ -13,7 +13,7 @@ import {
 import { AppError } from '../utils/errors'
 import { decryptToken, encryptToken } from '../utils/encryption'
 import { logger } from '../utils/logger'
-import { getMetaApiBase, getMetaAppId, getMetaAppSecret, getMetaGraphApiVersion } from '../utils/metaConfig'
+import { getMetaApiBase, getMetaAppId, getMetaAppSecret, getMetaGraphApiVersion, getMetaGraphUrl } from '../utils/metaConfig'
 import { normalizeIndianPhoneNumber } from '../utils/phone'
 
 type WhatsAppMessageType =
@@ -1088,54 +1088,588 @@ private async subscribeWabaToApp(
   // TEMPLATES
   // ============================================================
 
+  serializeMetaTemplate(template: any) {
+    const data = template?.toObject ? template.toObject() : template
+
+    return {
+      id: data._id,
+      templateId: data.templateId || null,
+      name: data.name,
+      category: data.category,
+      language: data.language,
+      status: data.status,
+      quality: data.quality || 'UNKNOWN',
+      components: data.components || [],
+      variables: data.variables || [],
+      rejectionReason: data.rejectionReason || null,
+      createdAt: data.createdAt,
+      updatedAt: data.updatedAt,
+    }
+  }
+
+  private validateTemplateName(name: string): string {
+    const normalized = String(name || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_]/g, '_')
+      .replace(/_+/g, '_')
+      .replace(/^_|_$/g, '')
+
+    if (!normalized || normalized.length < 2) {
+      throw new AppError(
+        'Template name must be at least 2 characters (lowercase letters, numbers, underscores).',
+        400,
+      )
+    }
+
+    if (!/^[a-z][a-z0-9_]*$/.test(normalized)) {
+      throw new AppError(
+        'Template name must start with a letter and contain only lowercase letters, numbers, and underscores.',
+        400,
+      )
+    }
+
+    return normalized
+  }
+
+  private validateTemplateLanguage(language: string): string {
+    const normalized = String(language || '').trim()
+
+    if (!normalized || !/^[a-z]{2}(_[A-Z]{2})?$/.test(normalized)) {
+      throw new AppError(
+        'Language must be a valid WhatsApp language code (e.g. en, en_US, hi).',
+        400,
+      )
+    }
+
+    return normalized
+  }
+
+  private validateTemplateCategory(
+    category: string,
+  ): 'MARKETING' | 'UTILITY' | 'AUTHENTICATION' {
+    const normalized = String(category || '').trim().toUpperCase()
+
+    if (
+      normalized !== 'MARKETING' &&
+      normalized !== 'UTILITY' &&
+      normalized !== 'AUTHENTICATION'
+    ) {
+      throw new AppError(
+        'Category must be MARKETING, UTILITY, or AUTHENTICATION.',
+        400,
+      )
+    }
+
+    return normalized
+  }
+
+  private buildTemplateComponentsFromPayload(payload: {
+    header?: {
+      format?: 'TEXT' | 'IMAGE' | 'VIDEO' | 'DOCUMENT'
+      text?: string
+    }
+    body: string
+    footer?: string
+    buttons?: Array<{
+      type: 'QUICK_REPLY' | 'URL' | 'PHONE_NUMBER'
+      text: string
+      url?: string
+      phone_number?: string
+    }>
+    variableExamples?: Record<string, string>
+  }) {
+    const body = String(payload.body || '').trim()
+
+    if (!body) {
+      throw new AppError('Template body is required.', 400)
+    }
+
+    const components: any[] = []
+    const variables = this.extractTemplateVariables([{ text: body }])
+
+    if (payload.header?.format) {
+      const header: any = {
+        type: 'HEADER',
+        format: payload.header.format,
+      }
+
+      if (payload.header.format === 'TEXT') {
+        const headerText = String(payload.header.text || '').trim()
+        if (!headerText) {
+          throw new AppError(
+            'Header text is required when header format is TEXT.',
+            400,
+          )
+        }
+        header.text = headerText
+      }
+
+      components.push(header)
+    }
+
+    const bodyComponent: any = {
+      type: 'BODY',
+      text: body,
+    }
+
+    if (variables.length > 0) {
+      const examples = variables.map((key, index) => {
+        const provided = payload.variableExamples?.[key]
+        if (provided && String(provided).trim()) {
+          return String(provided).trim()
+        }
+        return `Sample ${index + 1}`
+      })
+
+      bodyComponent.example = {
+        body_text: [examples],
+      }
+    }
+
+    components.push(bodyComponent)
+
+    const footer = String(payload.footer || '').trim()
+    if (footer) {
+      components.push({
+        type: 'FOOTER',
+        text: footer,
+      })
+    }
+
+    const buttons = payload.buttons || []
+    if (buttons.length > 0) {
+      if (buttons.length > 3) {
+        throw new AppError('WhatsApp templates support at most 3 buttons.', 400)
+      }
+
+      const mappedButtons = buttons.map((button) => {
+        const text = String(button.text || '').trim()
+        if (!text) {
+          throw new AppError('Each button requires text.', 400)
+        }
+
+        if (button.type === 'URL') {
+          const url = String(button.url || '').trim()
+          if (!url || !/^https?:\/\//i.test(url)) {
+            throw new AppError(
+              'URL buttons require a valid http(s) URL.',
+              400,
+            )
+          }
+          return { type: 'URL', text, url }
+        }
+
+        if (button.type === 'PHONE_NUMBER') {
+          const phone = String(button.phone_number || '').trim()
+          if (!phone) {
+            throw new AppError(
+              'Phone buttons require a phone_number value.',
+              400,
+            )
+          }
+          return { type: 'PHONE_NUMBER', text, phone_number: phone }
+        }
+
+        return { type: 'QUICK_REPLY', text }
+      })
+
+      components.push({
+        type: 'BUTTONS',
+        buttons: mappedButtons,
+      })
+    }
+
+    return {
+      components,
+      variables: this.extractTemplateVariables(components),
+    }
+  }
+
+  async createDraftTemplate(
+    organizationId: number,
+    payload: {
+      name: string
+      language: string
+      category: string
+      header?: {
+        format?: 'TEXT' | 'IMAGE' | 'VIDEO' | 'DOCUMENT'
+        text?: string
+      }
+      body: string
+      footer?: string
+      buttons?: Array<{
+        type: 'QUICK_REPLY' | 'URL' | 'PHONE_NUMBER'
+        text: string
+        url?: string
+        phone_number?: string
+      }>
+      variableExamples?: Record<string, string>
+    },
+  ) {
+    await this.getAccountWithToken(organizationId)
+
+    const name = this.validateTemplateName(payload.name)
+    const language = this.validateTemplateLanguage(payload.language)
+    const category = this.validateTemplateCategory(payload.category)
+    const { components, variables } =
+      this.buildTemplateComponentsFromPayload(payload)
+
+    const existing = await WhatsAppMetaTemplate.findOne({
+      organizationId,
+      name,
+      language,
+      deletedAt: null,
+    })
+
+    if (existing) {
+      throw new AppError(
+        `A template named "${name}" (${language}) already exists for this organization.`,
+        409,
+      )
+    }
+
+    const created = await WhatsAppMetaTemplate.create({
+      organizationId,
+      templateId: null,
+      name,
+      language,
+      category,
+      status: 'DRAFT',
+      quality: 'UNKNOWN',
+      components,
+      variables,
+      rejectionReason: null,
+      deletedAt: null,
+    })
+
+    return this.serializeMetaTemplate(created)
+  }
+
+  async updateDraftTemplate(
+    organizationId: number,
+    templateId: number,
+    payload: {
+      name?: string
+      language?: string
+      category?: string
+      header?: {
+        format?: 'TEXT' | 'IMAGE' | 'VIDEO' | 'DOCUMENT'
+        text?: string
+      }
+      body?: string
+      footer?: string
+      buttons?: Array<{
+        type: 'QUICK_REPLY' | 'URL' | 'PHONE_NUMBER'
+        text: string
+        url?: string
+        phone_number?: string
+      }>
+      variableExamples?: Record<string, string>
+    },
+  ) {
+    const template = await WhatsAppMetaTemplate.findOne({
+      organizationId,
+      _id: Number(templateId),
+      deletedAt: null,
+    })
+
+    if (!template) {
+      throw new AppError('Template not found', 404)
+    }
+
+    if (template.status !== 'DRAFT' && template.status !== 'REJECTED') {
+      throw new AppError(
+        'Only DRAFT or REJECTED templates can be edited. Approved Meta templates cannot be edited as local drafts.',
+        400,
+      )
+    }
+
+    const name = this.validateTemplateName(payload.name || template.name)
+    const language = this.validateTemplateLanguage(
+      payload.language || template.language,
+    )
+    const category = this.validateTemplateCategory(
+      payload.category || template.category,
+    )
+
+    const existingBody =
+      template.components?.find((component) => component.type === 'BODY')
+        ?.text || ''
+    const existingFooter =
+      template.components?.find((component) => component.type === 'FOOTER')
+        ?.text || ''
+    const existingHeader = template.components?.find(
+      (component) => component.type === 'HEADER',
+    )
+    const existingButtons =
+      template.components?.find((component) => component.type === 'BUTTONS')
+        ?.buttons || []
+
+    const { components, variables } = this.buildTemplateComponentsFromPayload({
+      header:
+        payload.header !== undefined
+          ? payload.header
+          : existingHeader
+            ? {
+                format: existingHeader.format,
+                text: existingHeader.text,
+              }
+            : undefined,
+      body: payload.body !== undefined ? payload.body : existingBody,
+      footer: payload.footer !== undefined ? payload.footer : existingFooter,
+      buttons:
+        payload.buttons !== undefined
+          ? payload.buttons
+          : (existingButtons as any),
+      variableExamples: payload.variableExamples,
+    })
+
+    const duplicate = await WhatsAppMetaTemplate.findOne({
+      organizationId,
+      name,
+      language,
+      deletedAt: null,
+      _id: { $ne: template._id },
+    })
+
+    if (duplicate) {
+      throw new AppError(
+        `A template named "${name}" (${language}) already exists for this organization.`,
+        409,
+      )
+    }
+
+    template.name = name
+    template.language = language
+    template.category = category
+    template.components = components
+    template.variables = variables
+    template.status = 'DRAFT'
+    template.rejectionReason = null
+    await template.save()
+
+    return this.serializeMetaTemplate(template)
+  }
+
+  async submitTemplateToMeta(organizationId: number, templateId: number) {
+    const { account, accessToken } =
+      await this.getAccountWithToken(organizationId)
+
+    const template = await WhatsAppMetaTemplate.findOne({
+      organizationId,
+      _id: Number(templateId),
+      deletedAt: null,
+    })
+
+    if (!template) {
+      throw new AppError('Template not found', 404)
+    }
+
+    if (template.status !== 'DRAFT' && template.status !== 'REJECTED') {
+      throw new AppError(
+        'Only DRAFT or REJECTED templates can be submitted to Meta.',
+        400,
+      )
+    }
+
+    const bodyComponent = template.components?.find(
+      (component) => component.type === 'BODY',
+    )
+
+    if (!bodyComponent?.text) {
+      throw new AppError('Template body is required before submission.', 400)
+    }
+
+    const metaPayload = {
+      name: template.name,
+      language: template.language,
+      category: template.category,
+      components: template.components,
+      allow_category_change: true,
+    }
+
+    try {
+      const response = await axios.post(
+        getMetaGraphUrl(`${account.wabaId}/message_templates`),
+        metaPayload,
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 30000,
+        },
+      )
+
+      const metaTemplateId = String(
+        response.data?.id || response.data?.template_id || '',
+      )
+      const metaStatus = String(
+        response.data?.status || 'PENDING',
+      ).toUpperCase()
+
+      if (!metaTemplateId) {
+        throw new AppError(
+          'Meta did not return a template ID after submission.',
+          502,
+        )
+      }
+
+      template.templateId = metaTemplateId
+      template.status =
+        metaStatus === 'APPROVED'
+          ? 'APPROVED'
+          : metaStatus === 'REJECTED'
+            ? 'REJECTED'
+            : 'PENDING'
+      template.rejectionReason = null
+      await template.save()
+
+      return this.serializeMetaTemplate(template)
+    } catch (error: any) {
+      if (error instanceof AppError) {
+        throw error
+      }
+
+      const metaMessage =
+        error.response?.data?.error?.error_user_msg ||
+        error.response?.data?.error?.message ||
+        'Failed to submit WhatsApp template to Meta'
+
+      logger.error('Error submitting WhatsApp template to Meta:', {
+        organizationId,
+        wabaId: account.wabaId,
+        templateName: template.name,
+        metaError: error.response?.data?.error || error.message,
+      })
+
+      throw new AppError(
+        metaMessage,
+        this.getMetaErrorStatus(error.response?.status),
+      )
+    }
+  }
+
+  async deleteLocalTemplate(organizationId: number, templateId: number) {
+    const template = await WhatsAppMetaTemplate.findOne({
+      organizationId,
+      _id: Number(templateId),
+      deletedAt: null,
+    })
+
+    if (!template) {
+      throw new AppError('Template not found', 404)
+    }
+
+    if (template.status !== 'DRAFT' && template.status !== 'REJECTED') {
+      throw new AppError(
+        'Only DRAFT or REJECTED local templates can be deleted from the CRM.',
+        400,
+      )
+    }
+
+    template.deletedAt = new Date()
+    await template.save()
+  }
+
   async syncMetaTemplates(organizationId: number): Promise<any[]> {
     try {
       const { account, accessToken } =
         await this.getAccountWithToken(organizationId)
 
       const response = await axios.get(
-        `${this.metaApiBase}/${this.apiVersion}/${account.wabaId}/message_templates`,
+        getMetaGraphUrl(`${account.wabaId}/message_templates`),
         {
           params: {
-            access_token: accessToken,
             limit: 100,
+            fields:
+              'id,name,language,status,category,quality_score,components,rejected_reason',
           },
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+          timeout: 30000,
         },
       )
 
       const templates = response.data?.data || []
       const savedTemplates: any[] = []
+      const seenMetaIds = new Set<string>()
 
       for (const template of templates) {
+        const metaTemplateId = String(template.id)
+        seenMetaIds.add(metaTemplateId)
+
         const components = template.components || []
         const variables = this.extractTemplateVariables(components)
+        const status = String(template.status || 'PENDING').toUpperCase()
+        const quality = String(
+          template.quality_score?.score ||
+            template.quality ||
+            'UNKNOWN',
+        ).toUpperCase()
 
-        const saved = await WhatsAppMetaTemplate.findOneAndUpdate(
+        const update = {
+          organizationId,
+          templateId: metaTemplateId,
+          name: template.name,
+          category: template.category,
+          language: template.language,
+          status,
+          quality,
+          components,
+          variables,
+          rejectionReason: template.rejected_reason || null,
+          deletedAt: null,
+        }
+
+        let saved = await WhatsAppMetaTemplate.findOneAndUpdate(
           {
             organizationId,
-            templateId: template.id,
-          },
-          {
-            organizationId,
-            templateId: template.id,
-            name: template.name,
-            category: template.category,
-            language: template.language,
-            status: template.status,
-            quality: template.quality || 'UNKNOWN',
-            components,
-            variables,
+            templateId: metaTemplateId,
             deletedAt: null,
           },
+          update,
           {
-            upsert: true,
             new: true,
-            setDefaultsOnInsert: true,
           },
         )
 
-        savedTemplates.push(saved)
+        if (!saved) {
+          saved = await WhatsAppMetaTemplate.findOneAndUpdate(
+            {
+              organizationId,
+              name: template.name,
+              language: template.language,
+              deletedAt: null,
+            },
+            update,
+            {
+              new: true,
+            },
+          )
+        }
+
+        if (!saved) {
+          saved = await WhatsAppMetaTemplate.create(update)
+        }
+
+        savedTemplates.push(this.serializeMetaTemplate(saved))
       }
+
+      // Soft-disable Meta-linked templates that disappeared from Meta.
+      await WhatsAppMetaTemplate.updateMany(
+        {
+          organizationId,
+          deletedAt: null,
+          templateId: { $type: 'string', $nin: Array.from(seenMetaIds) },
+          status: { $nin: ['DRAFT'] },
+        },
+        {
+          status: 'DISABLED',
+        },
+      )
 
       await WhatsAppAccount.updateOne(
         {
@@ -1147,7 +1681,14 @@ private async subscribeWabaToApp(
         },
       )
 
-      return savedTemplates
+      const localTemplates = await WhatsAppMetaTemplate.find({
+        organizationId,
+        deletedAt: null,
+      })
+        .sort({ updatedAt: -1 })
+        .lean()
+
+      return localTemplates.map((item) => this.serializeMetaTemplate(item))
     } catch (error: any) {
       logger.error(
         'Error syncing Meta WhatsApp templates:',
@@ -1161,7 +1702,7 @@ private async subscribeWabaToApp(
       throw new AppError(
         error.response?.data?.error?.message ||
           'Failed to sync Meta WhatsApp templates',
-        500,
+        this.getMetaErrorStatus(error.response?.status),
       )
     }
   }

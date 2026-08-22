@@ -500,6 +500,101 @@ async sendCrmMessage(
   }
 
   /**
+   * Create a local WhatsApp template draft (not submitted to Meta).
+   */
+  async createTemplate(
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) {
+    try {
+      const { organizationId } = req.auth!
+      const template = await whatsappService.createDraftTemplate(
+        organizationId,
+        req.body,
+      )
+
+      return success(res, template, 'Template draft created', 201)
+    } catch (error) {
+      next(error)
+    }
+  }
+
+  /**
+   * Update a local DRAFT / REJECTED template.
+   */
+  async updateTemplate(
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) {
+    try {
+      const { organizationId } = req.auth!
+      const { templateId } = req.params
+
+      const template = await whatsappService.updateDraftTemplate(
+        organizationId,
+        Number(templateId),
+        req.body,
+      )
+
+      return success(res, template, 'Template draft updated')
+    } catch (error) {
+      next(error)
+    }
+  }
+
+  /**
+   * Submit a local draft to Meta for approval.
+   */
+  async submitTemplate(
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) {
+    try {
+      const { organizationId } = req.auth!
+      const { templateId } = req.params
+
+      const template = await whatsappService.submitTemplateToMeta(
+        organizationId,
+        Number(templateId),
+      )
+
+      return success(
+        res,
+        template,
+        'Template submitted to Meta successfully',
+      )
+    } catch (error) {
+      next(error)
+    }
+  }
+
+  /**
+   * Soft-delete a local DRAFT / REJECTED template.
+   */
+  async deleteTemplate(
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) {
+    try {
+      const { organizationId } = req.auth!
+      const { templateId } = req.params
+
+      await whatsappService.deleteLocalTemplate(
+        organizationId,
+        Number(templateId),
+      )
+
+      return success(res, { deleted: true }, 'Template deleted')
+    } catch (error) {
+      next(error)
+    }
+  }
+
+  /**
    * Get all templates with pagination and filters
    */
   async getTemplates(
@@ -554,7 +649,7 @@ async sendCrmMessage(
       const [templates, total] =
         await Promise.all([
           WhatsAppMetaTemplate.find(query)
-            .sort({ createdAt: -1 })
+            .sort({ updatedAt: -1 })
             .skip(skip)
             .limit(limitNum)
             .lean(),
@@ -570,7 +665,9 @@ async sendCrmMessage(
 
       return successPaginated(
         res,
-        templates,
+        templates.map((template) =>
+          whatsappService.serializeMetaTemplate(template),
+        ),
         meta,
         'Templates retrieved successfully',
       )
@@ -607,7 +704,7 @@ async sendCrmMessage(
 
       return success(
         res,
-        template,
+        whatsappService.serializeMetaTemplate(template),
         'Template retrieved successfully',
       )
     } catch (error) {

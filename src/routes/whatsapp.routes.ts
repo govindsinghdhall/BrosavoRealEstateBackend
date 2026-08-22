@@ -115,11 +115,44 @@ router.get(
   whatsappController.getTemplates,
 );
 
+// Create local template draft
+router.post(
+  "/whatsapp/templates",
+  requirePermission("whatsapp.manage"),
+  whatsappController.createTemplate,
+);
+
 // Sync templates from Meta
 router.post(
   "/whatsapp/templates/sync",
   requirePermission("whatsapp.manage"),
   whatsappController.syncTemplates,
+);
+
+// Get / update / delete a local template
+router.get(
+  "/whatsapp/templates/:templateId",
+  requirePermission("whatsapp.read"),
+  whatsappController.getTemplate,
+);
+
+router.put(
+  "/whatsapp/templates/:templateId",
+  requirePermission("whatsapp.manage"),
+  whatsappController.updateTemplate,
+);
+
+router.delete(
+  "/whatsapp/templates/:templateId",
+  requirePermission("whatsapp.manage"),
+  whatsappController.deleteTemplate,
+);
+
+// Submit draft to Meta for approval
+router.post(
+  "/whatsapp/templates/:templateId/submit",
+  requirePermission("whatsapp.manage"),
+  whatsappController.submitTemplate,
 );
 
 // ============================================================

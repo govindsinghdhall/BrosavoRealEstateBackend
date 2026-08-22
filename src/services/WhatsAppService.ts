@@ -1,4 +1,4 @@
-import axios from 'axios'
+import axios from "axios";
 import {
   WhatsAppAccount,
   WhatsAppConversation,
@@ -9,50 +9,56 @@ import {
   WhatsAppCampaignRecipient,
   Contact,
   Lead,
-} from '../models'
-import { AppError } from '../utils/errors'
-import { decryptToken, encryptToken } from '../utils/encryption'
-import { logger } from '../utils/logger'
-import { getMetaApiBase, getMetaAppId, getMetaAppSecret, getMetaGraphApiVersion, getMetaGraphUrl } from '../utils/metaConfig'
-import { normalizeIndianPhoneNumber } from '../utils/phone'
+} from "../models";
+import { AppError } from "../utils/errors";
+import { decryptToken, encryptToken } from "../utils/encryption";
+import { logger } from "../utils/logger";
+import {
+  getMetaApiBase,
+  getMetaAppId,
+  getMetaAppSecret,
+  getMetaGraphApiVersion,
+  getMetaGraphUrl,
+} from "../utils/metaConfig";
+import { normalizeIndianPhoneNumber } from "../utils/phone";
 
 type WhatsAppMessageType =
-  | 'text'
-  | 'template'
-  | 'image'
-  | 'video'
-  | 'audio'
-  | 'document'
-  | 'location'
-  | 'interactive'
+  | "text"
+  | "template"
+  | "image"
+  | "video"
+  | "audio"
+  | "document"
+  | "location"
+  | "interactive";
 
 interface SendMessageData {
-  to: string
-  type: WhatsAppMessageType
-  content?: any
-  templateName?: string
-  templateLanguage?: string
-  templateComponents?: any[]
-  metadata?: any
+  to: string;
+  type: WhatsAppMessageType;
+  content?: any;
+  templateName?: string;
+  templateLanguage?: string;
+  templateComponents?: any[];
+  metadata?: any;
 }
 
 export class WhatsAppService {
-  private static instance: WhatsAppService
+  private static instance: WhatsAppService;
 
-  private readonly metaApiBase = getMetaApiBase()
+  private readonly metaApiBase = getMetaApiBase();
 
   private get apiVersion(): string {
-    return getMetaGraphApiVersion()
+    return getMetaGraphApiVersion();
   }
 
   private constructor() {}
 
   static getInstance(): WhatsAppService {
     if (!WhatsAppService.instance) {
-      WhatsAppService.instance = new WhatsAppService()
+      WhatsAppService.instance = new WhatsAppService();
     }
 
-    return WhatsAppService.instance
+    return WhatsAppService.instance;
   }
 
   // ============================================================
@@ -60,18 +66,19 @@ export class WhatsAppService {
   // ============================================================
 
   async getAuthUrl(data: {
-    organizationId: number
-    userId: number
+    organizationId: number;
+    userId: number;
   }): Promise<string> {
-    const clientId = getMetaAppId()
-    const redirectUri = process.env.WHATSAPP_REDIRECT_URI || process.env.META_OAUTH_REDIRECT_URI
+    const clientId = getMetaAppId();
+    const redirectUri =
+      process.env.WHATSAPP_REDIRECT_URI || process.env.META_OAUTH_REDIRECT_URI;
 
     if (!clientId) {
-      throw new AppError('WHATSAPP_CLIENT_ID is not configured', 500)
+      throw new AppError("WHATSAPP_CLIENT_ID is not configured", 500);
     }
 
     if (!redirectUri) {
-      throw new AppError('WHATSAPP_REDIRECT_URI is not configured', 500)
+      throw new AppError("WHATSAPP_REDIRECT_URI is not configured", 500);
     }
 
     const state = Buffer.from(
@@ -80,32 +87,32 @@ export class WhatsAppService {
         userId: data.userId,
         timestamp: Date.now(),
       }),
-    ).toString('base64url')
+    ).toString("base64url");
 
     const params = new URLSearchParams({
       client_id: clientId,
       redirect_uri: redirectUri,
-      response_type: 'code',
+      response_type: "code",
       scope: [
-        'whatsapp_business_management',
-        'whatsapp_business_messaging',
-      ].join(','),
+        "whatsapp_business_management",
+        "whatsapp_business_messaging",
+      ].join(","),
       state,
-    })
+    });
 
-    return `https://www.facebook.com/${this.apiVersion}/dialog/oauth?${params.toString()}`
+    return `https://www.facebook.com/${this.apiVersion}/dialog/oauth?${params.toString()}`;
   }
 
   async exchangeToken(code: string, redirectUri: string): Promise<any> {
     try {
-      const clientId = getMetaAppId()
-      const clientSecret = getMetaAppSecret()
+      const clientId = getMetaAppId();
+      const clientSecret = getMetaAppSecret();
 
       if (!clientId || !clientSecret) {
         throw new AppError(
-          'WhatsApp client credentials are not configured',
+          "WhatsApp client credentials are not configured",
           500,
-        )
+        );
       }
 
       const response = await axios.get(
@@ -114,29 +121,29 @@ export class WhatsAppService {
           params: {
             client_id: clientId,
             client_secret: clientSecret,
-            grant_type: 'authorization_code',
+            grant_type: "authorization_code",
             redirect_uri: redirectUri,
             code,
           },
         },
-      )
+      );
 
-      return response.data
+      return response.data;
     } catch (error: any) {
       logger.error(
-        'Error exchanging WhatsApp authorization code:',
+        "Error exchanging WhatsApp authorization code:",
         error.response?.data || error.message,
-      )
+      );
 
       if (error instanceof AppError) {
-        throw error
+        throw error;
       }
 
       throw new AppError(
         error.response?.data?.error?.message ||
-          'Failed to exchange authorization code',
+          "Failed to exchange authorization code",
         500,
-      )
+      );
     }
   }
 
@@ -145,22 +152,20 @@ export class WhatsAppService {
     code: string,
     redirectUri: string,
   ) {
-    const tokenData = await this.exchangeToken(code, redirectUri)
+    const tokenData = await this.exchangeToken(code, redirectUri);
 
     if (!tokenData?.access_token) {
-      throw new AppError('Meta did not return an access token', 502)
+      throw new AppError("Meta did not return an access token", 502);
     }
 
-    const accountDetails = await this.getAccountDetails(
-      tokenData.access_token,
-    )
+    const accountDetails = await this.getAccountDetails(tokenData.access_token);
 
-    const tokenExpiry = new Date()
+    const tokenExpiry = new Date();
 
     if (tokenData.expires_in) {
       tokenExpiry.setSeconds(
         tokenExpiry.getSeconds() + Number(tokenData.expires_in),
-      )
+      );
     }
 
     const account = await this.saveAccount(organizationId, {
@@ -172,408 +177,345 @@ export class WhatsAppService {
       displayName: accountDetails.displayName,
       accessToken: tokenData.access_token,
       tokenExpiry,
-    })
+    });
 
     try {
-      await this.syncMetaTemplates(organizationId)
+      await this.syncMetaTemplates(organizationId);
     } catch (error) {
       logger.warn(
-        'Template sync failed after connecting WhatsApp account:',
+        "Template sync failed after connecting WhatsApp account:",
         error,
-      )
+      );
     }
 
-    return this.serializeAccount(account)
+    return this.serializeAccount(account);
   }
 
   // ============================================================
-// META EMBEDDED SIGNUP
-// ============================================================
+  // META EMBEDDED SIGNUP
+  // ============================================================
 
-async completeEmbeddedSignup(
-  organizationId: number,
-  authorizationCode: string,
-) {
-  try {
-    if (!authorizationCode) {
-      throw new AppError(
-        'Meta Embedded Signup authorization code is required',
-        400,
-      )
-    }
+  async completeEmbeddedSignup(
+    organizationId: number,
+    authorizationCode: string,
+  ) {
+    try {
+      if (!authorizationCode) {
+        throw new AppError(
+          "Meta Embedded Signup authorization code is required",
+          400,
+        );
+      }
 
-    const clientId = getMetaAppId()
-    const clientSecret = getMetaAppSecret()
+      const clientId = getMetaAppId();
+      const clientSecret = getMetaAppSecret();
 
-    if (!clientId || !clientSecret) {
-      throw new AppError(
-        'Meta WhatsApp client configuration is missing',
-        500,
-      )
-    }
+      if (!clientId || !clientSecret) {
+        throw new AppError(
+          "Meta WhatsApp client configuration is missing",
+          500,
+        );
+      }
 
-    // --------------------------------------------------------
-    // 1. Exchange Embedded Signup authorization code
-    //    for a Meta access token
-    // --------------------------------------------------------
+      // --------------------------------------------------------
+      // 1. Exchange Embedded Signup authorization code
+      //    for a Meta access token
+      // --------------------------------------------------------
 
-    const tokenResponse = await axios.get(
-      `${this.metaApiBase}/oauth/access_token`,
-      {
-        params: {
-          client_id: clientId,
-          client_secret: clientSecret,
-          code: authorizationCode,
+      const tokenResponse = await axios.get(
+        `${this.metaApiBase}/oauth/access_token`,
+        {
+          params: {
+            client_id: clientId,
+            client_secret: clientSecret,
+            code: authorizationCode,
+          },
         },
-      },
-    )
+      );
 
-    const oauthUserToken =
-      tokenResponse.data?.access_token
+      const oauthUserToken = tokenResponse.data?.access_token;
 
-    if (!oauthUserToken) {
-      logger.error(
-        'Meta token exchange response did not contain an access token:',
-        tokenResponse.data,
-      )
+      if (!oauthUserToken) {
+        logger.error(
+          "Meta token exchange response did not contain an access token:",
+          tokenResponse.data,
+        );
 
-      throw new AppError(
-        'Meta did not return an access token',
-        401,
-      )
-    }
+        throw new AppError("Meta did not return an access token", 401);
+      }
 
-    logger.info(
-      `Meta Embedded Signup authorization code exchanged successfully for organization ${organizationId}`,
-    )
+      logger.info(
+        `Meta Embedded Signup authorization code exchanged successfully for organization ${organizationId}`,
+      );
 
-    // --------------------------------------------------------
-    // 2. Debug the OAuth user token
-    //    debug_token requires an app access token (or an app
-    //    admin/developer user token) — not the customer token.
-    // --------------------------------------------------------
+      // --------------------------------------------------------
+      // 2. Debug the OAuth user token
+      //    debug_token requires an app access token (or an app
+      //    admin/developer user token) — not the customer token.
+      // --------------------------------------------------------
 
-    const appAccessToken = `${clientId}|${clientSecret}`
+      const appAccessToken = `${clientId}|${clientSecret}`;
 
-    const debugResponse = await axios.get(
-      `${this.metaApiBase}/${this.apiVersion}/debug_token`,
-      {
-        params: {
-          input_token: oauthUserToken,
-          access_token: appAccessToken,
+      const debugResponse = await axios.get(
+        `${this.metaApiBase}/${this.apiVersion}/debug_token`,
+        {
+          params: {
+            input_token: oauthUserToken,
+            access_token: appAccessToken,
+          },
         },
-      },
-    )
+      );
 
-    const tokenData =
-      debugResponse.data?.data
+      const tokenData = debugResponse.data?.data;
 
-    if (!tokenData?.is_valid) {
-      throw new AppError(
-        'The Meta OAuth token is invalid or expired',
-        401,
-      )
-    }
+      if (!tokenData?.is_valid) {
+        throw new AppError("The Meta OAuth token is invalid or expired", 401);
+      }
 
-    // Make sure this token belongs to our Meta app.
-    const configuredAppId = getMetaAppId()
+      // Make sure this token belongs to our Meta app.
+      const configuredAppId = getMetaAppId();
 
-    if (
-      configuredAppId &&
-      tokenData.app_id &&
-      String(tokenData.app_id) !==
-        String(configuredAppId)
-    ) {
-      throw new AppError(
-        'The Meta OAuth token does not belong to this application',
-        401,
-      )
-    }
+      if (
+        configuredAppId &&
+        tokenData.app_id &&
+        String(tokenData.app_id) !== String(configuredAppId)
+      ) {
+        throw new AppError(
+          "The Meta OAuth token does not belong to this application",
+          401,
+        );
+      }
 
-    // --------------------------------------------------------
-    // 3. Find the WABA returned by Embedded Signup
-    // --------------------------------------------------------
+      // --------------------------------------------------------
+      // 3. Find the WABA returned by Embedded Signup
+      // --------------------------------------------------------
 
-    const granularScopes =
-      tokenData.granular_scopes || []
+      const granularScopes = tokenData.granular_scopes || [];
 
-    const whatsappScope =
-      granularScopes.find(
-        (scope: any) =>
-          scope.scope ===
-          'whatsapp_business_management',
-      )
+      const whatsappScope = granularScopes.find(
+        (scope: any) => scope.scope === "whatsapp_business_management",
+      );
 
-    const targetWabaIds =
-      whatsappScope?.target_ids || []
+      const targetWabaIds = whatsappScope?.target_ids || [];
 
-    if (!targetWabaIds.length) {
-      throw new AppError(
-        'Meta did not return a WhatsApp Business Account from Embedded Signup',
-        404,
-      )
-    }
+      if (!targetWabaIds.length) {
+        throw new AppError(
+          "Meta did not return a WhatsApp Business Account from Embedded Signup",
+          404,
+        );
+      }
 
-    const wabaId =
-      String(targetWabaIds[0])
+      const wabaId = String(targetWabaIds[0]);
 
-    logger.info(
-      `Embedded Signup WABA identified: ${wabaId}`,
-    )
+      logger.info(`Embedded Signup WABA identified: ${wabaId}`);
 
-    // --------------------------------------------------------
-    // 4. Get WABA information
-    // --------------------------------------------------------
+      // --------------------------------------------------------
+      // 4. Get WABA information
+      // --------------------------------------------------------
 
-    const wabaResponse =
-      await axios.get(
+      const wabaResponse = await axios.get(
         `${this.metaApiBase}/${this.apiVersion}/${wabaId}`,
         {
           params: {
-            fields:
-              'id,name,currency,timezone_id,message_template_namespace',
+            fields: "id,name,currency,timezone_id,message_template_namespace",
             access_token: oauthUserToken,
           },
         },
-      )
+      );
 
-    const waba =
-      wabaResponse.data
+      const waba = wabaResponse.data;
 
-    if (!waba?.id) {
-      throw new AppError(
-        'Unable to retrieve the WhatsApp Business Account',
-        404,
-      )
-    }
+      if (!waba?.id) {
+        throw new AppError(
+          "Unable to retrieve the WhatsApp Business Account",
+          404,
+        );
+      }
 
-    // --------------------------------------------------------
-    // 5. Get phone numbers belonging to the WABA
-    // --------------------------------------------------------
+      // --------------------------------------------------------
+      // 5. Get phone numbers belonging to the WABA
+      // --------------------------------------------------------
 
-    const phoneResponse =
-      await axios.get(
+      const phoneResponse = await axios.get(
         `${this.metaApiBase}/${this.apiVersion}/${wabaId}/phone_numbers`,
         {
           params: {
             fields:
-              'id,display_phone_number,verified_name,quality_rating,code_verification_status',
+              "id,display_phone_number,verified_name,quality_rating,code_verification_status",
             access_token: oauthUserToken,
           },
         },
-      )
+      );
 
-    const phoneNumbers =
-      phoneResponse.data?.data || []
+      const phoneNumbers = phoneResponse.data?.data || [];
 
-    if (!phoneNumbers.length) {
-      throw new AppError(
-        'No WhatsApp phone number was found for the connected WABA',
-        404,
-      )
-    }
+      if (!phoneNumbers.length) {
+        throw new AppError(
+          "No WhatsApp phone number was found for the connected WABA",
+          404,
+        );
+      }
 
-    /*
-     * Embedded Signup can potentially involve more than
-     * one phone number. For now we use the first one.
-     *
-     * Later we can pass phoneNumberId from the frontend
-     * session event and verify it belongs to this WABA.
-     */
-    const phoneNumber =
-      phoneNumbers[0]
+      /*
+       * Embedded Signup can potentially involve more than
+       * one phone number. For now we use the first one.
+       *
+       * Later we can pass phoneNumberId from the frontend
+       * session event and verify it belongs to this WABA.
+       */
+      const phoneNumber = phoneNumbers[0];
 
-    // --------------------------------------------------------
-    // 6. Get owning business information
-    // --------------------------------------------------------
+      // --------------------------------------------------------
+      // 6. Get owning business information
+      // --------------------------------------------------------
 
-    let businessId = wabaId
+      let businessId = wabaId;
 
-    let businessName =
-      waba.name ||
-      'WhatsApp Business'
+      let businessName = waba.name || "WhatsApp Business";
 
-    try {
-      const ownerResponse =
-        await axios.get(
+      try {
+        const ownerResponse = await axios.get(
           `${this.metaApiBase}/${this.apiVersion}/${wabaId}`,
           {
             params: {
-              fields:
-                'owner_business_info',
-              access_token:
-                oauthUserToken,
+              fields: "owner_business_info",
+              access_token: oauthUserToken,
             },
           },
-        )
+        );
 
-      const owner =
-        ownerResponse.data
-          ?.owner_business_info
+        const owner = ownerResponse.data?.owner_business_info;
 
-      if (owner?.id) {
-        businessId =
-          String(owner.id)
+        if (owner?.id) {
+          businessId = String(owner.id);
+        }
+
+        if (owner?.name) {
+          businessName = owner.name;
+        }
+      } catch (error: any) {
+        logger.warn(
+          "Unable to retrieve WABA owner business information:",
+          error.response?.data || error.message,
+        );
       }
 
-      if (owner?.name) {
-        businessName =
-          owner.name
+      // --------------------------------------------------------
+      // 7. Calculate token expiry
+      // --------------------------------------------------------
+
+      const tokenExpiry = new Date();
+
+      if (tokenData.expires_at) {
+        tokenExpiry.setTime(Number(tokenData.expires_at) * 1000);
+      } else {
+        tokenExpiry.setDate(tokenExpiry.getDate() + 60);
       }
+
+      // --------------------------------------------------------
+      // 8. Save customer's WhatsApp account
+      // --------------------------------------------------------
+
+      const account = await this.saveAccount(organizationId, {
+        businessId,
+        businessName,
+        wabaId: String(waba.id),
+        phoneNumber:
+          phoneNumber.display_phone_number || phoneNumber.id || "unknown",
+        phoneNumberId: String(phoneNumber.id),
+        displayName:
+          phoneNumber.verified_name ||
+          waba.name ||
+          businessName ||
+          "WhatsApp Business",
+        accessToken: oauthUserToken,
+        tokenExpiry,
+      });
+
+      // --------------------------------------------------------
+      // 9. Subscribe WABA to our Meta app
+      // --------------------------------------------------------
+
+      try {
+        await this.subscribeWabaToApp(String(waba.id), oauthUserToken);
+
+        await WhatsAppAccount.updateOne(
+          {
+            _id: account._id,
+            organizationId,
+          },
+          {
+            webhookVerified: true,
+          },
+        );
+      } catch (error: any) {
+        logger.warn(
+          "WABA was connected but webhook subscription failed:",
+          error.response?.data || error.message,
+        );
+      }
+
+      // --------------------------------------------------------
+      // 10. Sync WhatsApp templates
+      // --------------------------------------------------------
+
+      try {
+        await this.syncMetaTemplates(organizationId);
+      } catch (error) {
+        logger.warn("Template sync failed after Embedded Signup:", error);
+      }
+
+      return this.serializeAccount(account);
     } catch (error: any) {
-      logger.warn(
-        'Unable to retrieve WABA owner business information:',
-        error.response?.data ||
-          error.message,
-      )
-    }
+      logger.error(
+        "Embedded Signup completion failed:",
+        error.response?.data || error.message,
+      );
 
-    // --------------------------------------------------------
-    // 7. Calculate token expiry
-    // --------------------------------------------------------
+      if (error instanceof AppError) {
+        throw error;
+      }
 
-    const tokenExpiry =
-      new Date()
-
-    if (tokenData.expires_at) {
-      tokenExpiry.setTime(
-        Number(tokenData.expires_at) *
-          1000,
-      )
-    } else {
-      tokenExpiry.setDate(
-        tokenExpiry.getDate() + 60,
-      )
-    }
-
-    // --------------------------------------------------------
-    // 8. Save customer's WhatsApp account
-    // --------------------------------------------------------
-
-    const account =
-      await this.saveAccount(
-        organizationId,
-        {
-          businessId,
-          businessName,
-          wabaId: String(
-            waba.id,
-          ),
-          phoneNumber:
-            phoneNumber.display_phone_number ||
-            phoneNumber.id ||
-            'unknown',
-          phoneNumberId:
-            String(phoneNumber.id),
-          displayName:
-            phoneNumber.verified_name ||
-            waba.name ||
-            businessName ||
-            'WhatsApp Business',
-          accessToken:
-            oauthUserToken,
-          tokenExpiry,
-        },
-      )
-
-    // --------------------------------------------------------
-    // 9. Subscribe WABA to our Meta app
-    // --------------------------------------------------------
-
-    try {
-      await this.subscribeWabaToApp(
-        String(waba.id),
-        oauthUserToken,
-      )
-
-      await WhatsAppAccount.updateOne(
-        {
-          _id: account._id,
-          organizationId,
-        },
-        {
-          webhookVerified: true,
-        },
-      )
-    } catch (error: any) {
-      logger.warn(
-        'WABA was connected but webhook subscription failed:',
-        error.response?.data ||
-          error.message,
-      )
-    }
-
-    // --------------------------------------------------------
-    // 10. Sync WhatsApp templates
-    // --------------------------------------------------------
-
-    try {
-      await this.syncMetaTemplates(
-        organizationId,
-      )
-    } catch (error) {
-      logger.warn(
-        'Template sync failed after Embedded Signup:',
-        error,
-      )
-    }
-
-    return this.serializeAccount(
-      account,
-    )
-  } catch (error: any) {
-    logger.error(
-      'Embedded Signup completion failed:',
-      error.response?.data ||
-        error.message,
-    )
-
-    if (error instanceof AppError) {
-      throw error
-    }
-
-    throw new AppError(
-      error.response?.data?.error?.message ||
-        'Failed to complete WhatsApp Embedded Signup',
-      500,
-    )
-  }
-}
-
-private async subscribeWabaToApp(
-  wabaId: string,
-  accessToken: string,
-): Promise<void> {
-  try {
-    const response = await axios.post(
-      `${this.metaApiBase}/${this.apiVersion}/${wabaId}/subscribed_apps`,
-      {},
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      },
-    )
-
-    if (response.data?.success !== true) {
       throw new AppError(
-        'Meta did not confirm WABA webhook subscription',
-        502,
-      )
+        error.response?.data?.error?.message ||
+          "Failed to complete WhatsApp Embedded Signup",
+        500,
+      );
     }
-
-    logger.info(
-      `WhatsApp WABA ${wabaId} subscribed to app successfully`,
-    )
-  } catch (error: any) {
-    logger.error(
-      `Failed to subscribe WABA ${wabaId} to app:`,
-      error.response?.data || error.message,
-    )
-
-    throw error
   }
-}
+
+  private async subscribeWabaToApp(
+    wabaId: string,
+    accessToken: string,
+  ): Promise<void> {
+    try {
+      const response = await axios.post(
+        `${this.metaApiBase}/${this.apiVersion}/${wabaId}/subscribed_apps`,
+        {},
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+        },
+      );
+
+      if (response.data?.success !== true) {
+        throw new AppError(
+          "Meta did not confirm WABA webhook subscription",
+          502,
+        );
+      }
+
+      logger.info(`WhatsApp WABA ${wabaId} subscribed to app successfully`);
+    } catch (error: any) {
+      logger.error(
+        `Failed to subscribe WABA ${wabaId} to app:`,
+        error.response?.data || error.message,
+      );
+
+      throw error;
+    }
+  }
 
   async getAccountDetails(accessToken: string): Promise<any> {
     try {
@@ -583,28 +525,28 @@ private async subscribeWabaToApp(
           params: {
             access_token: accessToken,
             fields:
-              'id,name,business_verification_status,phone_numbers{id,display_phone_number,quality_rating,verified_name}',
+              "id,name,business_verification_status,phone_numbers{id,display_phone_number,quality_rating,verified_name}",
           },
         },
-      )
+      );
 
-      const accounts = response.data?.data || []
+      const accounts = response.data?.data || [];
 
       if (!accounts.length) {
-        throw new AppError('No WhatsApp Business Account found', 404)
+        throw new AppError("No WhatsApp Business Account found", 404);
       }
 
-      const account = accounts[0]
-      const phoneNumbers = account.phone_numbers?.data || []
+      const account = accounts[0];
+      const phoneNumbers = account.phone_numbers?.data || [];
 
       if (!phoneNumbers.length) {
         throw new AppError(
-          'No WhatsApp phone number found for this business account',
+          "No WhatsApp phone number found for this business account",
           404,
-        )
+        );
       }
 
-      const phoneNumber = phoneNumbers[0]
+      const phoneNumber = phoneNumbers[0];
 
       return {
         businessId: account.id,
@@ -614,22 +556,22 @@ private async subscribeWabaToApp(
         phoneNumber: phoneNumber.display_phone_number,
         displayName: phoneNumber.verified_name || account.name,
         quality: phoneNumber.quality_rating,
-      }
+      };
     } catch (error: any) {
       logger.error(
-        'Error getting WhatsApp account details:',
+        "Error getting WhatsApp account details:",
         error.response?.data || error.message,
-      )
+      );
 
       if (error instanceof AppError) {
-        throw error
+        throw error;
       }
 
       throw new AppError(
         error.response?.data?.error?.message ||
-          'Failed to get WhatsApp account details',
+          "Failed to get WhatsApp account details",
         500,
-      )
+      );
     }
   }
 
@@ -640,41 +582,41 @@ private async subscribeWabaToApp(
   async saveAccount(
     organizationId: number,
     accountData: {
-      businessId: string
-      businessName: string
-      wabaId: string
-      phoneNumber: string
-      phoneNumberId: string
-      displayName: string
-      accessToken: string
-      tokenExpiry: Date
+      businessId: string;
+      businessName: string;
+      wabaId: string;
+      phoneNumber: string;
+      phoneNumberId: string;
+      displayName: string;
+      accessToken: string;
+      tokenExpiry: Date;
     },
   ): Promise<any> {
-    const orgId = Number(organizationId)
-    const phoneNumberId = String(accountData.phoneNumberId)
+    const orgId = Number(organizationId);
+    const phoneNumberId = String(accountData.phoneNumberId);
 
     if (!Number.isFinite(orgId)) {
-      throw new AppError('Invalid organization for WhatsApp account save', 400)
+      throw new AppError("Invalid organization for WhatsApp account save", 400);
     }
 
     if (!phoneNumberId) {
-      throw new AppError('WhatsApp phone number ID is required', 400)
+      throw new AppError("WhatsApp phone number ID is required", 400);
     }
 
-    let encryptedToken: string
+    let encryptedToken: string;
 
     try {
-      encryptedToken = encryptToken(accountData.accessToken)
+      encryptedToken = encryptToken(accountData.accessToken);
     } catch (error: any) {
       logger.error(
-        'Error encrypting WhatsApp access token during account save:',
+        "Error encrypting WhatsApp access token during account save:",
         error.message,
-      )
+      );
 
       throw new AppError(
-        'WhatsApp account could not be saved because token encryption is misconfigured',
+        "WhatsApp account could not be saved because token encryption is misconfigured",
         500,
-      )
+      );
     }
 
     try {
@@ -691,13 +633,13 @@ private async subscribeWabaToApp(
         organizationId: { $ne: orgId },
         deletedAt: null,
         isConnected: true,
-      }).select('_id organizationId')
+      }).select("_id organizationId");
 
       if (phoneTakenByOtherOrg) {
         throw new AppError(
-          'This WhatsApp phone number is already connected to another organization',
+          "This WhatsApp phone number is already connected to another organization",
           409,
-        )
+        );
       }
 
       let existing =
@@ -705,16 +647,16 @@ private async subscribeWabaToApp(
           organizationId: orgId,
           deletedAt: null,
           isConnected: true,
-        }).select('+accessToken')) ||
+        }).select("+accessToken")) ||
         (await WhatsAppAccount.findOne({
           organizationId: orgId,
           phoneNumberId,
-        }).select('+accessToken')) ||
+        }).select("+accessToken")) ||
         (await WhatsAppAccount.findOne({
           organizationId: orgId,
         })
           .sort({ updatedAt: -1 })
-          .select('+accessToken'))
+          .select("+accessToken"));
 
       const accountFields = {
         businessName: accountData.businessName,
@@ -724,7 +666,7 @@ private async subscribeWabaToApp(
         phoneNumber: accountData.phoneNumber,
         phoneNumberId,
         accessToken: encryptedToken,
-        tokenType: 'user',
+        tokenType: "user",
         tokenExpiry: accountData.tokenExpiry,
         isConnected: true,
         webhookVerified: false,
@@ -732,7 +674,7 @@ private async subscribeWabaToApp(
         connectedAt: new Date(),
         disconnectedAt: null as Date | null,
         lastSync: new Date(),
-      }
+      };
 
       if (existing) {
         const updated = await WhatsAppAccount.findOneAndUpdate(
@@ -746,34 +688,34 @@ private async subscribeWabaToApp(
           {
             new: true,
             runValidators: true,
-            context: 'query',
+            context: "query",
           },
-        ).select('+accessToken')
+        ).select("+accessToken");
 
         if (!updated) {
           throw new AppError(
-            'Failed to update the existing WhatsApp account for this organization',
+            "Failed to update the existing WhatsApp account for this organization",
             500,
-          )
+          );
         }
 
-        return updated
+        return updated;
       }
 
       return await WhatsAppAccount.create({
         organizationId: orgId,
         ...accountFields,
-      })
+      });
     } catch (error: any) {
       if (error instanceof AppError) {
-        throw error
+        throw error;
       }
 
-      const mongoCode = error?.code
+      const mongoCode = error?.code;
       const isDuplicate =
         mongoCode === 11000 ||
-        (error?.name === 'MongoServerError' &&
-          String(error?.message || '').includes('E11000'))
+        (error?.name === "MongoServerError" &&
+          String(error?.message || "").includes("E11000"));
 
       if (isDuplicate) {
         /*
@@ -785,12 +727,12 @@ private async subscribeWabaToApp(
             (await WhatsAppAccount.findOne({
               organizationId: orgId,
               phoneNumberId,
-            }).select('_id organizationId')) ||
+            }).select("_id organizationId")) ||
             (await WhatsAppAccount.findOne({
               organizationId: orgId,
               deletedAt: null,
               isConnected: true,
-            }).select('_id organizationId'))
+            }).select("_id organizationId"));
 
           if (raced && Number(raced.organizationId) === orgId) {
             const recovered = await WhatsAppAccount.findOneAndUpdate(
@@ -807,7 +749,7 @@ private async subscribeWabaToApp(
                   phoneNumber: accountData.phoneNumber,
                   phoneNumberId,
                   accessToken: encryptedToken,
-                  tokenType: 'user',
+                  tokenType: "user",
                   tokenExpiry: accountData.tokenExpiry,
                   isConnected: true,
                   webhookVerified: false,
@@ -820,57 +762,57 @@ private async subscribeWabaToApp(
               {
                 new: true,
                 runValidators: true,
-                context: 'query',
+                context: "query",
               },
-            ).select('+accessToken')
+            ).select("+accessToken");
 
             if (recovered) {
-              return recovered
+              return recovered;
             }
           }
         } catch (retryError: any) {
           logger.error(
-            'Error recovering WhatsApp account after duplicate key:',
+            "Error recovering WhatsApp account after duplicate key:",
             retryError.message,
-          )
+          );
         }
 
         logger.error(
-          'Duplicate key while saving WhatsApp account:',
+          "Duplicate key while saving WhatsApp account:",
           error.message,
-        )
+        );
 
         throw new AppError(
-          'A WhatsApp account with this phone number is already connected. Disconnect it first or reconnect the existing organization account.',
+          "A WhatsApp account with this phone number is already connected. Disconnect it first or reconnect the existing organization account.",
           409,
-        )
+        );
       }
 
-      if (error?.name === 'ValidationError') {
+      if (error?.name === "ValidationError") {
         const details = Object.values(error.errors || {})
           .map((item: any) => item?.message)
           .filter(Boolean)
-          .join('; ')
+          .join("; ");
 
         logger.error(
-          'Validation error while saving WhatsApp account:',
+          "Validation error while saving WhatsApp account:",
           details || error.message,
-        )
+        );
 
         throw new AppError(
           details
             ? `Failed to save WhatsApp account: ${details}`
-            : 'Failed to save WhatsApp account due to invalid account data',
+            : "Failed to save WhatsApp account due to invalid account data",
           400,
-        )
+        );
       }
 
-      logger.error('Error saving WhatsApp account:', error.message)
+      logger.error("Error saving WhatsApp account:", error.message);
 
       throw new AppError(
-        'Failed to save WhatsApp account. Please try reconnecting WhatsApp.',
+        "Failed to save WhatsApp account. Please try reconnecting WhatsApp.",
         500,
-      )
+      );
     }
   }
 
@@ -883,42 +825,36 @@ private async subscribeWabaToApp(
       organizationId,
       isConnected: true,
       deletedAt: null,
-    }).select('+accessToken')
+    }).select("+accessToken");
 
     if (!account) {
-      throw new AppError(
-        'WhatsApp account not found or not connected',
-        404,
-      )
+      throw new AppError("WhatsApp account not found or not connected", 404);
     }
 
     if (!account.accessToken) {
       throw new AppError(
-        'WhatsApp access token is missing. Please reconnect WhatsApp.',
+        "WhatsApp access token is missing. Please reconnect WhatsApp.",
         401,
-      )
+      );
     }
 
-    let accessToken: string
+    let accessToken: string;
 
     try {
-      accessToken = decryptToken(account.accessToken)
+      accessToken = decryptToken(account.accessToken);
     } catch (error: any) {
-      logger.error(
-        'Failed to decrypt WhatsApp access token:',
-        error.message,
-      )
+      logger.error("Failed to decrypt WhatsApp access token:", error.message);
 
       throw new AppError(
-        'WhatsApp access token could not be decrypted. Please reconnect the WhatsApp account.',
+        "WhatsApp access token could not be decrypted. Please reconnect the WhatsApp account.",
         401,
-      )
+      );
     }
 
     return {
       account,
       accessToken,
-    }
+    };
   }
 
   /**
@@ -930,12 +866,12 @@ private async subscribeWabaToApp(
    */
   async getAccount(organizationId: number): Promise<any> {
     const { account, accessToken } =
-      await this.getAccountWithToken(organizationId)
+      await this.getAccountWithToken(organizationId);
 
     return {
       ...account.toObject(),
       accessToken,
-    }
+    };
   }
 
   async getAccountInfo(organizationId: number): Promise<any> {
@@ -943,36 +879,36 @@ private async subscribeWabaToApp(
       organizationId,
       isConnected: true,
       deletedAt: null,
-    })
+    });
 
     if (!account) {
-      return null
+      return null;
     }
 
-    return this.serializeAccount(account)
+    return this.serializeAccount(account);
   }
 
   async testConnection(organizationId: number): Promise<{
-    ok: boolean
-    message: string
-    displayName?: string
-    businessPhone?: string
-    wabaId?: string
-    phoneNumberId?: string
+    ok: boolean;
+    message: string;
+    displayName?: string;
+    businessPhone?: string;
+    wabaId?: string;
+    phoneNumberId?: string;
   }> {
-    let accessToken: string
-    let account: any
+    let accessToken: string;
+    let account: any;
 
     try {
-      const loaded = await this.getAccountWithToken(organizationId)
-      account = loaded.account
-      accessToken = loaded.accessToken
+      const loaded = await this.getAccountWithToken(organizationId);
+      account = loaded.account;
+      accessToken = loaded.accessToken;
     } catch (error: any) {
       if (error instanceof AppError) {
-        throw error
+        throw error;
       }
 
-      throw new AppError('Access token is invalid.', 401)
+      throw new AppError("Access token is invalid.", 401);
     }
 
     try {
@@ -980,78 +916,77 @@ private async subscribeWabaToApp(
         `${this.metaApiBase}/${this.apiVersion}/${account.phoneNumberId}`,
         {
           params: {
-            fields: 'id,display_phone_number,verified_name,quality_rating',
+            fields: "id,display_phone_number,verified_name,quality_rating",
             access_token: accessToken,
           },
           timeout: 20000,
         },
-      )
+      );
 
       const wabaResponse = await axios.get(
         `${this.metaApiBase}/${this.apiVersion}/${account.wabaId}`,
         {
           params: {
-            fields: 'id,name',
+            fields: "id,name",
             access_token: accessToken,
           },
           timeout: 20000,
         },
-      )
+      );
 
       if (!phoneResponse.data?.id) {
-        throw new AppError('Phone number is unavailable.', 404)
+        throw new AppError("Phone number is unavailable.", 404);
       }
 
       if (!wabaResponse.data?.id) {
-        throw new AppError('WhatsApp Business Account is unavailable.', 404)
+        throw new AppError("WhatsApp Business Account is unavailable.", 404);
       }
 
       await WhatsAppAccount.updateOne(
         { organizationId, _id: account._id },
         { lastSync: new Date() },
-      )
+      );
 
       return {
         ok: true,
-        message: 'WhatsApp connection is active.',
-        displayName:
-          phoneResponse.data.verified_name || account.displayName,
+        message: "WhatsApp connection is active.",
+        displayName: phoneResponse.data.verified_name || account.displayName,
         businessPhone:
           phoneResponse.data.display_phone_number || account.phoneNumber,
         wabaId: String(wabaResponse.data.id),
         phoneNumberId: String(phoneResponse.data.id),
-      }
+      };
     } catch (error: any) {
       if (error instanceof AppError) {
-        throw error
+        throw error;
       }
 
-      const status = error.response?.status
-      const metaMessage = error.response?.data?.error?.message
+      const status = error.response?.status;
+      const metaMessage = error.response?.data?.error?.message;
 
       if (status === 401 || status === 403) {
-        throw new AppError('Access token is invalid.', 401)
+        throw new AppError("Access token is invalid.", 401);
       }
 
       if (status === 404) {
-        throw new AppError('Phone number is unavailable.', 404)
+        throw new AppError("Phone number is unavailable.", 404);
       }
 
       throw new AppError(
-        metaMessage || 'Unable to verify the WhatsApp connection.',
+        metaMessage || "Unable to verify the WhatsApp connection.",
         this.getMetaErrorStatus(status),
-      )
+      );
     }
   }
 
   private serializeAccount(account: any): any {
-    const data = account.toObject ? account.toObject() : account
+    const data = account.toObject ? account.toObject() : account;
 
-    delete data.accessToken
+    delete data.accessToken;
 
     return {
       id: data._id,
-      status: data.isConnected ? 'connected' : 'disconnected',
+      status: data.isConnected ? "connected" : "disconnected",
       isConnected: Boolean(data.isConnected),
       businessName: data.businessName,
       displayName: data.displayName,
@@ -1066,7 +1001,7 @@ private async subscribeWabaToApp(
       connectedAt: data.connectedAt || data.createdAt,
       disconnectedAt: data.disconnectedAt || null,
       lastSync: data.lastSync,
-    }
+    };
   }
 
   async disconnectAccount(organizationId: number): Promise<void> {
@@ -1081,7 +1016,7 @@ private async subscribeWabaToApp(
         deletedAt: new Date(),
         disconnectedAt: new Date(),
       },
-    )
+    );
   }
 
   // ============================================================
@@ -1089,7 +1024,7 @@ private async subscribeWabaToApp(
   // ============================================================
 
   serializeMetaTemplate(template: any) {
-    const data = template?.toObject ? template.toObject() : template
+    const data = template?.toObject ? template.toObject() : template;
 
     return {
       id: data._id,
@@ -1098,235 +1033,237 @@ private async subscribeWabaToApp(
       category: data.category,
       language: data.language,
       status: data.status,
-      quality: data.quality || 'UNKNOWN',
+      quality: data.quality || "UNKNOWN",
       components: data.components || [],
       variables: data.variables || [],
       rejectionReason: data.rejectionReason || null,
       createdAt: data.createdAt,
       updatedAt: data.updatedAt,
-    }
+    };
   }
 
   private validateTemplateName(name: string): string {
-    const normalized = String(name || '')
+    const normalized = String(name || "")
       .trim()
       .toLowerCase()
-      .replace(/[^a-z0-9_]/g, '_')
-      .replace(/_+/g, '_')
-      .replace(/^_|_$/g, '')
+      .replace(/[^a-z0-9_]/g, "_")
+      .replace(/_+/g, "_")
+      .replace(/^_|_$/g, "");
 
     if (!normalized || normalized.length < 2) {
       throw new AppError(
-        'Template name must be at least 2 characters (lowercase letters, numbers, underscores).',
+        "Template name must be at least 2 characters (lowercase letters, numbers, underscores).",
         400,
-      )
+      );
     }
 
     if (!/^[a-z][a-z0-9_]*$/.test(normalized)) {
       throw new AppError(
-        'Template name must start with a letter and contain only lowercase letters, numbers, and underscores.',
+        "Template name must start with a letter and contain only lowercase letters, numbers, and underscores.",
         400,
-      )
+      );
     }
 
-    return normalized
+    return normalized;
   }
 
   private validateTemplateLanguage(language: string): string {
-    const normalized = String(language || '').trim()
+    const normalized = String(language || "").trim();
 
     if (!normalized || !/^[a-z]{2}(_[A-Z]{2})?$/.test(normalized)) {
       throw new AppError(
-        'Language must be a valid WhatsApp language code (e.g. en, en_US, hi).',
+        "Language must be a valid WhatsApp language code (e.g. en, en_US, hi).",
         400,
-      )
+      );
     }
 
-    return normalized
+    return normalized;
   }
 
   private validateTemplateCategory(
     category: string,
-  ): 'MARKETING' | 'UTILITY' | 'AUTHENTICATION' {
-    const normalized = String(category || '').trim().toUpperCase()
+  ): "MARKETING" | "UTILITY" | "AUTHENTICATION" {
+    const normalized = String(category || "")
+      .trim()
+      .toUpperCase();
 
     if (
-      normalized !== 'MARKETING' &&
-      normalized !== 'UTILITY' &&
-      normalized !== 'AUTHENTICATION'
+      normalized !== "MARKETING" &&
+      normalized !== "UTILITY" &&
+      normalized !== "AUTHENTICATION"
     ) {
       throw new AppError(
-        'Category must be MARKETING, UTILITY, or AUTHENTICATION.',
+        "Category must be MARKETING, UTILITY, or AUTHENTICATION.",
         400,
-      )
+      );
     }
 
-    return normalized
+    return normalized;
   }
 
   private buildTemplateComponentsFromPayload(payload: {
     header?: {
-      format?: 'TEXT' | 'IMAGE' | 'VIDEO' | 'DOCUMENT'
-      text?: string
-    }
-    body: string
-    footer?: string
+      format?: "TEXT" | "IMAGE" | "VIDEO" | "DOCUMENT";
+      text?: string;
+    };
+    body: string;
+    footer?: string;
     buttons?: Array<{
-      type: 'QUICK_REPLY' | 'URL' | 'PHONE_NUMBER'
-      text: string
-      url?: string
-      phone_number?: string
-    }>
-    variableExamples?: Record<string, string>
+      type: "QUICK_REPLY" | "URL" | "PHONE_NUMBER";
+      text: string;
+      url?: string;
+      phone_number?: string;
+    }>;
+    variableExamples?: Record<string, string>;
   }) {
-    const body = String(payload.body || '').trim()
+    const body = String(payload.body || "").trim();
 
     if (!body) {
-      throw new AppError('Template body is required.', 400)
+      throw new AppError("Template body is required.", 400);
     }
 
-    const components: any[] = []
-    const variables = this.extractTemplateVariables([{ text: body }])
+    const components: any[] = [];
+    const variables = this.extractTemplateVariables([{ text: body }]);
 
     if (payload.header?.format) {
       const header: any = {
-        type: 'HEADER',
+        type: "HEADER",
         format: payload.header.format,
-      }
+      };
 
-      if (payload.header.format === 'TEXT') {
-        const headerText = String(payload.header.text || '').trim()
+      if (payload.header.format === "TEXT") {
+        const headerText = String(payload.header.text || "").trim();
         if (!headerText) {
           throw new AppError(
-            'Header text is required when header format is TEXT.',
+            "Header text is required when header format is TEXT.",
             400,
-          )
+          );
         }
-        header.text = headerText
+        header.text = headerText;
       }
 
-      components.push(header)
+      components.push(header);
     }
 
     const bodyComponent: any = {
-      type: 'BODY',
+      type: "BODY",
       text: body,
-    }
+    };
 
     if (variables.length > 0) {
       const examples = variables.map((key, index) => {
-        const provided = payload.variableExamples?.[key]
+        const provided = payload.variableExamples?.[key];
         if (provided && String(provided).trim()) {
-          return String(provided).trim()
+          return String(provided).trim();
         }
-        return `Sample ${index + 1}`
-      })
+        return `Sample ${index + 1}`;
+      });
 
       bodyComponent.example = {
         body_text: [examples],
-      }
+      };
     }
 
-    components.push(bodyComponent)
+    components.push(bodyComponent);
 
-    const footer = String(payload.footer || '').trim()
+    const footer = String(payload.footer || "").trim();
     if (footer) {
       components.push({
-        type: 'FOOTER',
+        type: "FOOTER",
         text: footer,
-      })
+      });
     }
 
-    const buttons = payload.buttons || []
+    const buttons = payload.buttons || [];
     if (buttons.length > 0) {
       if (buttons.length > 3) {
-        throw new AppError('WhatsApp templates support at most 3 buttons.', 400)
+        throw new AppError(
+          "WhatsApp templates support at most 3 buttons.",
+          400,
+        );
       }
 
       const mappedButtons = buttons.map((button) => {
-        const text = String(button.text || '').trim()
+        const text = String(button.text || "").trim();
         if (!text) {
-          throw new AppError('Each button requires text.', 400)
+          throw new AppError("Each button requires text.", 400);
         }
 
-        if (button.type === 'URL') {
-          const url = String(button.url || '').trim()
+        if (button.type === "URL") {
+          const url = String(button.url || "").trim();
           if (!url || !/^https?:\/\//i.test(url)) {
-            throw new AppError(
-              'URL buttons require a valid http(s) URL.',
-              400,
-            )
+            throw new AppError("URL buttons require a valid http(s) URL.", 400);
           }
-          return { type: 'URL', text, url }
+          return { type: "URL", text, url };
         }
 
-        if (button.type === 'PHONE_NUMBER') {
-          const phone = String(button.phone_number || '').trim()
+        if (button.type === "PHONE_NUMBER") {
+          const phone = String(button.phone_number || "").trim();
           if (!phone) {
             throw new AppError(
-              'Phone buttons require a phone_number value.',
+              "Phone buttons require a phone_number value.",
               400,
-            )
+            );
           }
-          return { type: 'PHONE_NUMBER', text, phone_number: phone }
+          return { type: "PHONE_NUMBER", text, phone_number: phone };
         }
 
-        return { type: 'QUICK_REPLY', text }
-      })
+        return { type: "QUICK_REPLY", text };
+      });
 
       components.push({
-        type: 'BUTTONS',
+        type: "BUTTONS",
         buttons: mappedButtons,
-      })
+      });
     }
 
     return {
       components,
       variables: this.extractTemplateVariables(components),
-    }
+    };
   }
 
   async createDraftTemplate(
     organizationId: number,
     payload: {
-      name: string
-      language: string
-      category: string
+      name: string;
+      language: string;
+      category: string;
       header?: {
-        format?: 'TEXT' | 'IMAGE' | 'VIDEO' | 'DOCUMENT'
-        text?: string
-      }
-      body: string
-      footer?: string
+        format?: "TEXT" | "IMAGE" | "VIDEO" | "DOCUMENT";
+        text?: string;
+      };
+      body: string;
+      footer?: string;
       buttons?: Array<{
-        type: 'QUICK_REPLY' | 'URL' | 'PHONE_NUMBER'
-        text: string
-        url?: string
-        phone_number?: string
-      }>
-      variableExamples?: Record<string, string>
+        type: "QUICK_REPLY" | "URL" | "PHONE_NUMBER";
+        text: string;
+        url?: string;
+        phone_number?: string;
+      }>;
+      variableExamples?: Record<string, string>;
     },
   ) {
-    await this.getAccountWithToken(organizationId)
+    await this.getAccountWithToken(organizationId);
 
-    const name = this.validateTemplateName(payload.name)
-    const language = this.validateTemplateLanguage(payload.language)
-    const category = this.validateTemplateCategory(payload.category)
+    const name = this.validateTemplateName(payload.name);
+    const language = this.validateTemplateLanguage(payload.language);
+    const category = this.validateTemplateCategory(payload.category);
     const { components, variables } =
-      this.buildTemplateComponentsFromPayload(payload)
+      this.buildTemplateComponentsFromPayload(payload);
 
     const existing = await WhatsAppMetaTemplate.findOne({
       organizationId,
       name,
       language,
       deletedAt: null,
-    })
+    });
 
     if (existing) {
       throw new AppError(
         `A template named "${name}" (${language}) already exists for this organization.`,
         409,
-      )
+      );
     }
 
     const created = await WhatsAppMetaTemplate.create({
@@ -1335,76 +1272,76 @@ private async subscribeWabaToApp(
       name,
       language,
       category,
-      status: 'DRAFT',
-      quality: 'UNKNOWN',
+      status: "DRAFT",
+      quality: "UNKNOWN",
       components,
       variables,
       rejectionReason: null,
       deletedAt: null,
-    })
+    });
 
-    return this.serializeMetaTemplate(created)
+    return this.serializeMetaTemplate(created);
   }
 
   async updateDraftTemplate(
     organizationId: number,
     templateId: number,
     payload: {
-      name?: string
-      language?: string
-      category?: string
+      name?: string;
+      language?: string;
+      category?: string;
       header?: {
-        format?: 'TEXT' | 'IMAGE' | 'VIDEO' | 'DOCUMENT'
-        text?: string
-      }
-      body?: string
-      footer?: string
+        format?: "TEXT" | "IMAGE" | "VIDEO" | "DOCUMENT";
+        text?: string;
+      };
+      body?: string;
+      footer?: string;
       buttons?: Array<{
-        type: 'QUICK_REPLY' | 'URL' | 'PHONE_NUMBER'
-        text: string
-        url?: string
-        phone_number?: string
-      }>
-      variableExamples?: Record<string, string>
+        type: "QUICK_REPLY" | "URL" | "PHONE_NUMBER";
+        text: string;
+        url?: string;
+        phone_number?: string;
+      }>;
+      variableExamples?: Record<string, string>;
     },
   ) {
     const template = await WhatsAppMetaTemplate.findOne({
       organizationId,
       _id: Number(templateId),
       deletedAt: null,
-    })
+    });
 
     if (!template) {
-      throw new AppError('Template not found', 404)
+      throw new AppError("Template not found", 404);
     }
 
-    if (template.status !== 'DRAFT' && template.status !== 'REJECTED') {
+    if (template.status !== "DRAFT" && template.status !== "REJECTED") {
       throw new AppError(
-        'Only DRAFT or REJECTED templates can be edited. Approved Meta templates cannot be edited as local drafts.',
+        "Only DRAFT or REJECTED templates can be edited. Approved Meta templates cannot be edited as local drafts.",
         400,
-      )
+      );
     }
 
-    const name = this.validateTemplateName(payload.name || template.name)
+    const name = this.validateTemplateName(payload.name || template.name);
     const language = this.validateTemplateLanguage(
       payload.language || template.language,
-    )
+    );
     const category = this.validateTemplateCategory(
       payload.category || template.category,
-    )
+    );
 
     const existingBody =
-      template.components?.find((component) => component.type === 'BODY')
-        ?.text || ''
+      template.components?.find((component) => component.type === "BODY")
+        ?.text || "";
     const existingFooter =
-      template.components?.find((component) => component.type === 'FOOTER')
-        ?.text || ''
+      template.components?.find((component) => component.type === "FOOTER")
+        ?.text || "";
     const existingHeader = template.components?.find(
-      (component) => component.type === 'HEADER',
-    )
+      (component) => component.type === "HEADER",
+    );
     const existingButtons =
-      template.components?.find((component) => component.type === 'BUTTONS')
-        ?.buttons || []
+      template.components?.find((component) => component.type === "BUTTONS")
+        ?.buttons || [];
 
     const { components, variables } = this.buildTemplateComponentsFromPayload({
       header:
@@ -1423,7 +1360,7 @@ private async subscribeWabaToApp(
           ? payload.buttons
           : (existingButtons as any),
       variableExamples: payload.variableExamples,
-    })
+    });
 
     const duplicate = await WhatsAppMetaTemplate.findOne({
       organizationId,
@@ -1431,63 +1368,200 @@ private async subscribeWabaToApp(
       language,
       deletedAt: null,
       _id: { $ne: template._id },
-    })
+    });
 
     if (duplicate) {
       throw new AppError(
         `A template named "${name}" (${language}) already exists for this organization.`,
         409,
-      )
+      );
     }
 
-    template.name = name
-    template.language = language
-    template.category = category
-    template.components = components
-    template.variables = variables
-    template.status = 'DRAFT'
-    template.rejectionReason = null
-    await template.save()
+    template.name = name;
+    template.language = language;
+    template.category = category;
+    template.components = components;
+    template.variables = variables;
+    template.status = "DRAFT";
+    template.rejectionReason = null;
+    await template.save();
 
-    return this.serializeMetaTemplate(template)
+    return this.serializeMetaTemplate(template);
+  }
+
+  private buildMetaTemplateComponents(components: any[]): any[] {
+    if (!Array.isArray(components)) {
+      return [];
+    }
+
+    const stripMongoFields = (value: any): any => {
+      if (Array.isArray(value)) {
+        return value.map(stripMongoFields);
+      }
+
+      if (value && typeof value === "object") {
+        const cleaned: Record<string, any> = {};
+
+        for (const [key, val] of Object.entries(value)) {
+          // Never send Mongo/Mongoose internal fields to Meta.
+          if (
+            key === "_id" ||
+            key === "__v" ||
+            key === "organizationId" ||
+            key === "templateId" ||
+            key === "createdAt" ||
+            key === "updatedAt" ||
+            key === "deletedAt"
+          ) {
+            continue;
+          }
+
+          cleaned[key] = stripMongoFields(val);
+        }
+
+        return cleaned;
+      }
+
+      return value;
+    };
+
+    return components
+      .map((component: any) => {
+        if (!component || typeof component !== "object") {
+          return null;
+        }
+
+        const type = String(component.type || "").toUpperCase();
+
+        // BODY
+        if (type === "BODY") {
+          const result: any = {
+            type: "BODY",
+            text: String(component.text || ""),
+          };
+
+          if (component.example) {
+            result.example = stripMongoFields(component.example);
+          }
+
+          return result;
+        }
+
+        // HEADER
+        if (type === "HEADER") {
+          const result: any = {
+            type: "HEADER",
+            format: String(component.format || "TEXT").toUpperCase(),
+          };
+
+          if (result.format === "TEXT") {
+            if (component.text) {
+              result.text = String(component.text);
+            }
+
+            if (component.example) {
+              result.example = stripMongoFields(component.example);
+            }
+          } else if (component.example) {
+            result.example = stripMongoFields(component.example);
+          }
+
+          return result;
+        }
+
+        // FOOTER
+        if (type === "FOOTER") {
+          return {
+            type: "FOOTER",
+            text: String(component.text || ""),
+          };
+        }
+
+        // BUTTONS
+        if (type === "BUTTONS") {
+          const buttons = Array.isArray(component.buttons)
+            ? component.buttons
+            : [];
+
+          return {
+            type: "BUTTONS",
+            buttons: buttons.map((button: any) => {
+              const buttonType = String(button.type || "").toUpperCase();
+
+              const result: any = {
+                type: buttonType,
+                text: String(button.text || ""),
+              };
+
+              if (buttonType === "URL" && button.url) {
+                result.url = String(button.url);
+              }
+
+              if (buttonType === "PHONE_NUMBER" && button.phone_number) {
+                result.phone_number = String(button.phone_number);
+              }
+
+              if (button.example) {
+                result.example = stripMongoFields(button.example);
+              }
+
+              return result;
+            }),
+          };
+        }
+
+        // Fallback: recursively strip Mongo/Mongoose fields.
+        return stripMongoFields(component);
+      })
+      .filter(Boolean);
   }
 
   async submitTemplateToMeta(organizationId: number, templateId: number) {
     const { account, accessToken } =
-      await this.getAccountWithToken(organizationId)
+      await this.getAccountWithToken(organizationId);
 
     const template = await WhatsAppMetaTemplate.findOne({
       organizationId,
       _id: Number(templateId),
       deletedAt: null,
-    })
+    });
 
     if (!template) {
-      throw new AppError('Template not found', 404)
+      throw new AppError("Template not found", 404);
     }
 
-    if (template.status !== 'DRAFT' && template.status !== 'REJECTED') {
+    if (template.status !== "DRAFT" && template.status !== "REJECTED") {
       throw new AppError(
-        'Only DRAFT or REJECTED templates can be submitted to Meta.',
+        "Only DRAFT or REJECTED templates can be submitted to Meta.",
         400,
-      )
+      );
     }
 
     const bodyComponent = template.components?.find(
-      (component) => component.type === 'BODY',
-    )
+      (component) => component.type === "BODY",
+    );
 
     if (!bodyComponent?.text) {
-      throw new AppError('Template body is required before submission.', 400)
+      throw new AppError("Template body is required before submission.", 400);
     }
+
+    const metaComponents = this.buildMetaTemplateComponents(
+      template.components || [],
+    );
 
     const metaPayload = {
       name: template.name,
       language: template.language,
       category: template.category,
-      components: template.components,
+      components: metaComponents,
       allow_category_change: true,
-    }
+    };
+
+    logger.info("WhatsApp template Meta payload:", {
+      organizationId,
+      templateId,
+      payload: JSON.stringify(metaPayload),
+    });
 
     try {
       const response = await axios.post(
@@ -1496,58 +1570,58 @@ private async subscribeWabaToApp(
         {
           headers: {
             Authorization: `Bearer ${accessToken}`,
-            'Content-Type': 'application/json',
+            "Content-Type": "application/json",
           },
           timeout: 30000,
         },
-      )
+      );
 
       const metaTemplateId = String(
-        response.data?.id || response.data?.template_id || '',
-      )
+        response.data?.id || response.data?.template_id || "",
+      );
       const metaStatus = String(
-        response.data?.status || 'PENDING',
-      ).toUpperCase()
+        response.data?.status || "PENDING",
+      ).toUpperCase();
 
       if (!metaTemplateId) {
         throw new AppError(
-          'Meta did not return a template ID after submission.',
+          "Meta did not return a template ID after submission.",
           502,
-        )
+        );
       }
 
-      template.templateId = metaTemplateId
+      template.templateId = metaTemplateId;
       template.status =
-        metaStatus === 'APPROVED'
-          ? 'APPROVED'
-          : metaStatus === 'REJECTED'
-            ? 'REJECTED'
-            : 'PENDING'
-      template.rejectionReason = null
-      await template.save()
+        metaStatus === "APPROVED"
+          ? "APPROVED"
+          : metaStatus === "REJECTED"
+            ? "REJECTED"
+            : "PENDING";
+      template.rejectionReason = null;
+      await template.save();
 
-      return this.serializeMetaTemplate(template)
+      return this.serializeMetaTemplate(template);
     } catch (error: any) {
       if (error instanceof AppError) {
-        throw error
+        throw error;
       }
 
       const metaMessage =
         error.response?.data?.error?.error_user_msg ||
         error.response?.data?.error?.message ||
-        'Failed to submit WhatsApp template to Meta'
+        "Failed to submit WhatsApp template to Meta";
 
-      logger.error('Error submitting WhatsApp template to Meta:', {
+      logger.error("Error submitting WhatsApp template to Meta:", {
         organizationId,
         wabaId: account.wabaId,
         templateName: template.name,
         metaError: error.response?.data?.error || error.message,
-      })
+      });
 
       throw new AppError(
         metaMessage,
         this.getMetaErrorStatus(error.response?.status),
-      )
+      );
     }
   }
 
@@ -1556,27 +1630,27 @@ private async subscribeWabaToApp(
       organizationId,
       _id: Number(templateId),
       deletedAt: null,
-    })
+    });
 
     if (!template) {
-      throw new AppError('Template not found', 404)
+      throw new AppError("Template not found", 404);
     }
 
-    if (template.status !== 'DRAFT' && template.status !== 'REJECTED') {
+    if (template.status !== "DRAFT" && template.status !== "REJECTED") {
       throw new AppError(
-        'Only DRAFT or REJECTED local templates can be deleted from the CRM.',
+        "Only DRAFT or REJECTED local templates can be deleted from the CRM.",
         400,
-      )
+      );
     }
 
-    template.deletedAt = new Date()
-    await template.save()
+    template.deletedAt = new Date();
+    await template.save();
   }
 
   async syncMetaTemplates(organizationId: number): Promise<any[]> {
     try {
       const { account, accessToken } =
-        await this.getAccountWithToken(organizationId)
+        await this.getAccountWithToken(organizationId);
 
       const response = await axios.get(
         getMetaGraphUrl(`${account.wabaId}/message_templates`),
@@ -1584,31 +1658,29 @@ private async subscribeWabaToApp(
           params: {
             limit: 100,
             fields:
-              'id,name,language,status,category,quality_score,components,rejected_reason',
+              "id,name,language,status,category,quality_score,components,rejected_reason",
           },
           headers: {
             Authorization: `Bearer ${accessToken}`,
           },
           timeout: 30000,
         },
-      )
+      );
 
-      const templates = response.data?.data || []
-      const savedTemplates: any[] = []
-      const seenMetaIds = new Set<string>()
+      const templates = response.data?.data || [];
+      const savedTemplates: any[] = [];
+      const seenMetaIds = new Set<string>();
 
       for (const template of templates) {
-        const metaTemplateId = String(template.id)
-        seenMetaIds.add(metaTemplateId)
+        const metaTemplateId = String(template.id);
+        seenMetaIds.add(metaTemplateId);
 
-        const components = template.components || []
-        const variables = this.extractTemplateVariables(components)
-        const status = String(template.status || 'PENDING').toUpperCase()
+        const components = template.components || [];
+        const variables = this.extractTemplateVariables(components);
+        const status = String(template.status || "PENDING").toUpperCase();
         const quality = String(
-          template.quality_score?.score ||
-            template.quality ||
-            'UNKNOWN',
-        ).toUpperCase()
+          template.quality_score?.score || template.quality || "UNKNOWN",
+        ).toUpperCase();
 
         const update = {
           organizationId,
@@ -1622,7 +1694,7 @@ private async subscribeWabaToApp(
           variables,
           rejectionReason: template.rejected_reason || null,
           deletedAt: null,
-        }
+        };
 
         let saved = await WhatsAppMetaTemplate.findOneAndUpdate(
           {
@@ -1634,7 +1706,7 @@ private async subscribeWabaToApp(
           {
             new: true,
           },
-        )
+        );
 
         if (!saved) {
           saved = await WhatsAppMetaTemplate.findOneAndUpdate(
@@ -1648,14 +1720,14 @@ private async subscribeWabaToApp(
             {
               new: true,
             },
-          )
+          );
         }
 
         if (!saved) {
-          saved = await WhatsAppMetaTemplate.create(update)
+          saved = await WhatsAppMetaTemplate.create(update);
         }
 
-        savedTemplates.push(this.serializeMetaTemplate(saved))
+        savedTemplates.push(this.serializeMetaTemplate(saved));
       }
 
       // Soft-disable Meta-linked templates that disappeared from Meta.
@@ -1663,13 +1735,13 @@ private async subscribeWabaToApp(
         {
           organizationId,
           deletedAt: null,
-          templateId: { $type: 'string', $nin: Array.from(seenMetaIds) },
-          status: { $nin: ['DRAFT'] },
+          templateId: { $type: "string", $nin: Array.from(seenMetaIds) },
+          status: { $nin: ["DRAFT"] },
         },
         {
-          status: 'DISABLED',
+          status: "DISABLED",
         },
-      )
+      );
 
       await WhatsAppAccount.updateOne(
         {
@@ -1679,59 +1751,56 @@ private async subscribeWabaToApp(
         {
           lastSync: new Date(),
         },
-      )
+      );
 
       const localTemplates = await WhatsAppMetaTemplate.find({
         organizationId,
         deletedAt: null,
       })
         .sort({ updatedAt: -1 })
-        .lean()
+        .lean();
 
-      return localTemplates.map((item) => this.serializeMetaTemplate(item))
+      return localTemplates.map((item) => this.serializeMetaTemplate(item));
     } catch (error: any) {
       logger.error(
-        'Error syncing Meta WhatsApp templates:',
+        "Error syncing Meta WhatsApp templates:",
         error.response?.data || error.message,
-      )
+      );
 
       if (error instanceof AppError) {
-        throw error
+        throw error;
       }
 
       throw new AppError(
         error.response?.data?.error?.message ||
-          'Failed to sync Meta WhatsApp templates',
+          "Failed to sync Meta WhatsApp templates",
         this.getMetaErrorStatus(error.response?.status),
-      )
+      );
     }
   }
 
   private extractTemplateVariables(components: any[]): string[] {
-    const variables = new Set<string>()
+    const variables = new Set<string>();
 
     for (const component of components) {
-      const text = component?.text
+      const text = component?.text;
 
-      if (!text || typeof text !== 'string') {
-        continue
+      if (!text || typeof text !== "string") {
+        continue;
       }
 
-      const matches = text.match(/{{\s*([^}]+?)\s*}}/g) || []
+      const matches = text.match(/{{\s*([^}]+?)\s*}}/g) || [];
 
       for (const match of matches) {
-        const value = match
-          .replace('{{', '')
-          .replace('}}', '')
-          .trim()
+        const value = match.replace("{{", "").replace("}}", "").trim();
 
         if (value) {
-          variables.add(value)
+          variables.add(value);
         }
       }
     }
 
-    return Array.from(variables)
+    return Array.from(variables);
   }
 
   // ============================================================
@@ -1744,21 +1813,21 @@ private async subscribeWabaToApp(
   ): Promise<any> {
     try {
       const { account, accessToken } =
-        await this.getAccountWithToken(organizationId)
+        await this.getAccountWithToken(organizationId);
 
-      const normalizedPhone = this.normalizePhone(messageData.to)
+      const normalizedPhone = this.normalizePhone(messageData.to);
 
       if (this.isSameWhatsAppNumber(normalizedPhone, account.phoneNumber)) {
         throw new AppError(
-          'Cannot send a WhatsApp message to the connected business number.',
+          "Cannot send a WhatsApp message to the connected business number.",
           400,
-        )
+        );
       }
 
       const payload = this.buildMetaMessagePayload(
         normalizedPhone,
         messageData,
-      )
+      );
 
       const response = await axios.post(
         `${this.metaApiBase}/${this.apiVersion}/${account.phoneNumberId}/messages`,
@@ -1766,19 +1835,16 @@ private async subscribeWabaToApp(
         {
           headers: {
             Authorization: `Bearer ${accessToken}`,
-            'Content-Type': 'application/json',
+            "Content-Type": "application/json",
           },
           timeout: 30000,
         },
-      )
+      );
 
-      const messageId = response.data?.messages?.[0]?.id
+      const messageId = response.data?.messages?.[0]?.id;
 
       if (!messageId) {
-        throw new AppError(
-          'WhatsApp API did not return a message ID',
-          502,
-        )
+        throw new AppError("WhatsApp API did not return a message ID", 502);
       }
 
       const conversation = await this.getOrCreateConversation(
@@ -1786,7 +1852,7 @@ private async subscribeWabaToApp(
         normalizedPhone,
         account.phoneNumberId,
         account.wabaId,
-      )
+      );
 
       const savedMessage = await this.saveOutboundMessage({
         organizationId,
@@ -1797,14 +1863,14 @@ private async subscribeWabaToApp(
         type: messageData.type,
         content: messageData.content || {},
         metadata: messageData.metadata,
-      })
+      });
 
       const preview =
-        messageData.type === 'text'
-          ? String(messageData.content || '')
-          : messageData.type === 'template'
-            ? `[Template: ${messageData.templateName || 'message'}]`
-            : `[${messageData.type}]`
+        messageData.type === "text"
+          ? String(messageData.content || "")
+          : messageData.type === "template"
+            ? `[Template: ${messageData.templateName || "message"}]`
+            : `[${messageData.type}]`;
 
       await WhatsAppConversation.updateOne(
         {
@@ -1814,10 +1880,10 @@ private async subscribeWabaToApp(
         {
           lastMessage: preview.slice(0, 500),
           lastMessageAt: new Date(),
-          status: 'active',
+          status: "active",
           isArchived: false,
         },
-      )
+      );
 
       // Link this message to a campaign recipient if this was a campaign send.
       if (messageData.metadata?.campaignId) {
@@ -1829,47 +1895,49 @@ private async subscribeWabaToApp(
           },
           {
             messageId,
-            status: 'sent',
+            status: "sent",
             sentAt: new Date(),
           },
-        )
+        );
       }
 
       return {
         messageId,
         conversationId: conversation._id,
         message: this.serializeMessage(savedMessage),
-      }
+      };
     } catch (error: any) {
       logger.error(
-        'Error sending WhatsApp message:',
+        "Error sending WhatsApp message:",
         error.response?.data || error.message,
-      )
+      );
 
       if (error instanceof AppError) {
-        throw error
+        throw error;
       }
 
-      const metaError = error.response?.data?.error
-      const metaCode = String(metaError?.code || '')
-      const metaMessage = String(metaError?.error_user_msg || metaError?.message || '')
+      const metaError = error.response?.data?.error;
+      const metaCode = String(metaError?.code || "");
+      const metaMessage = String(
+        metaError?.error_user_msg || metaError?.message || "",
+      );
 
       if (
-        metaCode === '131047' ||
+        metaCode === "131047" ||
         /24.?hour|customer care|re-engagement|template/i.test(metaMessage)
       ) {
         throw new AppError(
           metaMessage ||
-            'A template is required to start this conversation. Meta only allows free-form text inside an active customer-service window.',
+            "A template is required to start this conversation. Meta only allows free-form text inside an active customer-service window.",
           400,
-          'TEMPLATE_REQUIRED',
-        )
+          "TEMPLATE_REQUIRED",
+        );
       }
 
       throw new AppError(
-        metaMessage || 'Failed to send WhatsApp message',
+        metaMessage || "Failed to send WhatsApp message",
         this.getMetaErrorStatus(error.response?.status),
-      )
+      );
     }
   }
 
@@ -1878,92 +1946,92 @@ private async subscribeWabaToApp(
     messageData: SendMessageData,
   ): any {
     const payload: any = {
-      messaging_product: 'whatsapp',
-      recipient_type: 'individual',
-      to: to.replace(/^\+/, ''),
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: to.replace(/^\+/, ""),
       type: messageData.type,
-    }
+    };
 
     switch (messageData.type) {
-      case 'text':
+      case "text":
         payload.text = {
           preview_url: false,
-          body: String(messageData.content || ''),
-        }
-        break
+          body: String(messageData.content || ""),
+        };
+        break;
 
-      case 'template':
+      case "template":
         if (!messageData.templateName) {
           throw new AppError(
-            'templateName is required for template messages',
+            "templateName is required for template messages",
             400,
-          )
+          );
         }
 
         payload.template = {
           name: messageData.templateName,
           language: {
-            code: messageData.templateLanguage || 'en_US',
+            code: messageData.templateLanguage || "en_US",
           },
           components: messageData.templateComponents || [],
-        }
-        break
+        };
+        break;
 
-      case 'image':
-      case 'video':
-      case 'audio':
-      case 'document':
-        payload[messageData.type] = messageData.content
-        break
+      case "image":
+      case "video":
+      case "audio":
+      case "document":
+        payload[messageData.type] = messageData.content;
+        break;
 
-      case 'location':
-        payload.location = messageData.content
-        break
+      case "location":
+        payload.location = messageData.content;
+        break;
 
-      case 'interactive':
-        payload.interactive = messageData.content
-        break
+      case "interactive":
+        payload.interactive = messageData.content;
+        break;
 
       default:
-        throw new AppError('Unsupported WhatsApp message type', 400)
+        throw new AppError("Unsupported WhatsApp message type", 400);
     }
 
-    return payload
+    return payload;
   }
 
   async sendCrmTextMessage(
     organizationId: number,
     input: {
-      text?: string
-      to?: string
-      leadId?: number
-      contactId?: number
-      conversationId?: number
-      type?: 'text' | 'template'
-      templateId?: number
-      templateVariables?: Record<string, string>
+      text?: string;
+      to?: string;
+      leadId?: number;
+      contactId?: number;
+      conversationId?: number;
+      type?: "text" | "template";
+      templateId?: number;
+      templateVariables?: Record<string, string>;
     },
   ): Promise<any> {
-    const messageType = input.templateId ? 'template' : input.type || 'text'
+    const messageType = input.templateId ? "template" : input.type || "text";
 
-    let recipientPhone = input.to
-    let leadId = input.leadId
-    let contactId = input.contactId
+    let recipientPhone = input.to;
+    let leadId = input.leadId;
+    let contactId = input.contactId;
 
     if (input.conversationId) {
       const conversation = await WhatsAppConversation.findOne({
         organizationId,
         _id: Number(input.conversationId),
         deletedAt: null,
-      })
+      });
 
       if (!conversation) {
-        throw new AppError('Conversation not found', 404)
+        throw new AppError("Conversation not found", 404);
       }
 
-      recipientPhone = conversation.customerPhone
-      leadId = conversation.leadId || leadId
-      contactId = conversation.contactId || contactId
+      recipientPhone = conversation.customerPhone;
+      leadId = conversation.leadId || leadId;
+      contactId = conversation.contactId || contactId;
     }
 
     if (!recipientPhone && input.leadId) {
@@ -1971,15 +2039,15 @@ private async subscribeWabaToApp(
         organizationId,
         _id: Number(input.leadId),
         deletedAt: null,
-      })
+      });
 
       if (!lead) {
-        throw new AppError('Lead not found in this organization', 404)
+        throw new AppError("Lead not found in this organization", 404);
       }
 
-      recipientPhone = lead.phone
-      leadId = Number(lead._id)
-      contactId = lead.contactId || contactId
+      recipientPhone = lead.phone;
+      leadId = Number(lead._id);
+      contactId = lead.contactId || contactId;
     }
 
     if (!recipientPhone && input.contactId) {
@@ -1987,31 +2055,31 @@ private async subscribeWabaToApp(
         organizationId,
         _id: Number(input.contactId),
         deletedAt: null,
-      })
+      });
 
       if (!contact) {
-        throw new AppError('Contact not found in this organization', 404)
+        throw new AppError("Contact not found in this organization", 404);
       }
 
-      recipientPhone = contact.phone
-      contactId = Number(contact._id)
+      recipientPhone = contact.phone;
+      contactId = Number(contact._id);
     }
 
     if (!recipientPhone) {
       throw new AppError(
-        'Provide a recipient phone, lead, contact, or conversation',
+        "Provide a recipient phone, lead, contact, or conversation",
         400,
-      )
+      );
     }
 
     // Auto-associate existing CRM contact/lead by phone when the caller
     // only supplied a recipient number. Never create contacts here.
     if (!leadId || !contactId) {
-      const variants = this.phoneLookupValues(recipientPhone)
+      const variants = this.phoneLookupValues(recipientPhone);
       const last10 = variants
-        .map((value) => value.replace(/\D/g, ''))
+        .map((value) => value.replace(/\D/g, ""))
         .sort((a, b) => b.length - a.length)[0]
-        ?.slice(-10)
+        ?.slice(-10);
 
       const phoneQuery = {
         organizationId,
@@ -2026,59 +2094,59 @@ private async subscribeWabaToApp(
               ]
             : []),
         ],
-      }
+      };
 
       if (!contactId) {
-        const contact = await Contact.findOne(phoneQuery)
+        const contact = await Contact.findOne(phoneQuery);
         if (contact) {
-          contactId = Number(contact._id)
+          contactId = Number(contact._id);
         }
       }
 
       if (!leadId) {
-        const lead = await Lead.findOne(phoneQuery)
+        const lead = await Lead.findOne(phoneQuery);
         if (lead) {
-          leadId = Number(lead._id)
+          leadId = Number(lead._id);
           if (!contactId && lead.contactId) {
-            contactId = Number(lead.contactId)
+            contactId = Number(lead.contactId);
           }
         }
       }
     }
 
-    let result
+    let result;
 
-    if (messageType === 'template') {
+    if (messageType === "template") {
       if (!input.templateId) {
-        throw new AppError('An approved WhatsApp template is required', 400)
+        throw new AppError("An approved WhatsApp template is required", 400);
       }
 
       const template = await WhatsAppMetaTemplate.findOne({
         organizationId,
         _id: Number(input.templateId),
         deletedAt: null,
-      })
+      });
 
       if (!template) {
-        throw new AppError('WhatsApp template not found', 404)
+        throw new AppError("WhatsApp template not found", 404);
       }
 
-      if (template.status !== 'APPROVED') {
+      if (template.status !== "APPROVED") {
         throw new AppError(
-          'Only approved WhatsApp templates can start a business conversation.',
+          "Only approved WhatsApp templates can start a business conversation.",
           400,
-        )
+        );
       }
 
       result = await this.sendMessage(organizationId, {
         to: recipientPhone,
-        type: 'template',
+        type: "template",
         content: {
           name: template.name,
           language: template.language,
         },
         templateName: template.name,
-        templateLanguage: template.language || 'en_US',
+        templateLanguage: template.language || "en_US",
         templateComponents: this.buildCampaignTemplateComponents(
           template.components || [],
           input.templateVariables || {},
@@ -2088,38 +2156,38 @@ private async subscribeWabaToApp(
           contactId,
           templateId: template._id,
         },
-      })
+      });
     } else {
-      const text = String(input.text || '').trim()
+      const text = String(input.text || "").trim();
 
       if (!text) {
-        throw new AppError('Message text is required', 400)
+        throw new AppError("Message text is required", 400);
       }
 
       result = await this.sendMessage(organizationId, {
         to: recipientPhone,
-        type: 'text',
+        type: "text",
         content: text,
         metadata: {
           leadId,
           contactId,
         },
-      })
+      });
     }
 
     if (leadId || contactId) {
-      let contactName: string | undefined
+      let contactName: string | undefined;
 
       if (contactId) {
         const contact = await Contact.findOne({
           organizationId,
           _id: contactId,
           deletedAt: null,
-        })
+        });
         if (contact) {
           contactName =
-            `${contact.firstName || ''} ${contact.lastName || ''}`.trim() ||
-            undefined
+            `${contact.firstName || ""} ${contact.lastName || ""}`.trim() ||
+            undefined;
         }
       }
 
@@ -2128,11 +2196,11 @@ private async subscribeWabaToApp(
           organizationId,
           _id: leadId,
           deletedAt: null,
-        })
+        });
         if (lead) {
           contactName =
-            `${lead.firstName || ''} ${lead.lastName || ''}`.trim() ||
-            undefined
+            `${lead.firstName || ""} ${lead.lastName || ""}`.trim() ||
+            undefined;
         }
       }
 
@@ -2146,21 +2214,21 @@ private async subscribeWabaToApp(
           ...(contactId ? { contactId } : {}),
           ...(contactName ? { contactName } : {}),
         },
-      )
+      );
     }
 
-    return result
+    return result;
   }
 
   private async saveOutboundMessage(data: {
-    organizationId: number
-    conversationId: number
-    messageId: string
-    from: string
-    to: string
-    type: WhatsAppMessageType
-    content: unknown
-    metadata?: unknown
+    organizationId: number;
+    conversationId: number;
+    messageId: string;
+    from: string;
+    to: string;
+    type: WhatsAppMessageType;
+    content: unknown;
+    metadata?: unknown;
   }) {
     try {
       return await WhatsAppMessage.create({
@@ -2169,94 +2237,91 @@ private async subscribeWabaToApp(
         messageId: data.messageId,
         from: data.from,
         to: data.to,
-        direction: 'outbound',
+        direction: "outbound",
         type: data.type,
         content: data.content,
-        status: 'sent',
+        status: "sent",
         metadata: data.metadata,
         sentAt: new Date(),
-      })
+      });
     } catch (error: any) {
       if (error?.code === 11000) {
         return WhatsAppMessage.findOne({
           organizationId: data.organizationId,
           messageId: data.messageId,
-        })
+        });
       }
 
-      throw error
+      throw error;
     }
   }
 
   private normalizePhone(phone: string): string {
-    const normalized = String(phone || '').trim()
+    const normalized = String(phone || "").trim();
 
     if (!normalized) {
-      throw new AppError('Recipient phone number is required', 400)
+      throw new AppError("Recipient phone number is required", 400);
     }
 
     // Existing utility is preferred for Indian CRM contacts.
     try {
-      const indian = normalizeIndianPhoneNumber(normalized)
+      const indian = normalizeIndianPhoneNumber(normalized);
 
       if (indian) {
-        return indian.replace(/[^\d+]/g, '')
+        return indian.replace(/[^\d+]/g, "");
       }
     } catch {
       // Fall through to generic normalization.
     }
 
-    const generic = normalized.replace(/[^\d+]/g, '')
+    const generic = normalized.replace(/[^\d+]/g, "");
 
-    if (generic.startsWith('+')) {
-      return generic
+    if (generic.startsWith("+")) {
+      return generic;
     }
 
     if (generic.length === 10) {
-      return `+91${generic}`
+      return `+91${generic}`;
     }
 
     if (generic.length >= 11 && generic.length <= 15) {
-      return `+${generic}`
+      return `+${generic}`;
     }
 
-    throw new AppError(
-      `Invalid WhatsApp phone number: ${phone}`,
-      400,
-    )
+    throw new AppError(`Invalid WhatsApp phone number: ${phone}`, 400);
   }
 
   private isSameWhatsAppNumber(left: string, right?: string | null): boolean {
     if (!left || !right) {
-      return false
+      return false;
     }
 
-    const a = String(left).replace(/\D/g, '')
-    const b = String(right).replace(/\D/g, '')
+    const a = String(left).replace(/\D/g, "");
+    const b = String(right).replace(/\D/g, "");
 
     if (!a || !b) {
-      return false
+      return false;
     }
 
     if (a === b) {
-      return true
+      return true;
     }
 
-    return a.length >= 10 && b.length >= 10 && a.slice(-10) === b.slice(-10)
+    return a.length >= 10 && b.length >= 10 && a.slice(-10) === b.slice(-10);
   }
 
   private getMetaErrorStatus(status?: number): number {
     if (!status) {
-      return 502
+      return 502;
     }
 
-    if (status === 400) return 400
-    if (status === 401 || status === 403) return 401
-    if (status === 404) return 404
-    if (status === 409) return 409
-    if (status === 429) return 429
+    if (status === 400) return 400;
+    if (status === 401 || status === 403) return 401;
+    if (status === 404) return 404;
+    if (status === 409) return 409;
+    if (status === 429) return 429;
 
-    return status >= 500 ? 502 : 500
+    return status >= 500 ? 502 : 500;
   }
 
   // ============================================================
@@ -2269,7 +2334,7 @@ private async subscribeWabaToApp(
     phoneNumberId: string,
     wabaId: string,
   ): Promise<any> {
-    const normalizedPhone = this.normalizePhone(customerPhone)
+    const normalizedPhone = this.normalizePhone(customerPhone);
 
     let conversation = await WhatsAppConversation.findOne({
       organizationId,
@@ -2277,7 +2342,7 @@ private async subscribeWabaToApp(
       phoneNumberId,
       wabaId,
       deletedAt: null,
-    })
+    });
 
     if (conversation) {
       await this.linkCrmRecordsToConversation(
@@ -2286,8 +2351,8 @@ private async subscribeWabaToApp(
         conversation._id,
         undefined,
         false,
-      )
-      return conversation
+      );
+      return conversation;
     }
 
     conversation = await WhatsAppConversation.create({
@@ -2298,9 +2363,9 @@ private async subscribeWabaToApp(
       lastMessageAt: new Date(),
       unreadCount: 0,
       isArchived: false,
-      status: 'active',
+      status: "active",
       deletedAt: null,
-    })
+    });
 
     await this.linkCrmRecordsToConversation(
       organizationId,
@@ -2308,9 +2373,9 @@ private async subscribeWabaToApp(
       conversation._id,
       undefined,
       false,
-    )
+    );
 
-    return conversation
+    return conversation;
   }
 
   async createConversation(
@@ -2319,30 +2384,30 @@ private async subscribeWabaToApp(
     leadId?: number,
   ): Promise<any> {
     if (!contactId && !leadId) {
-      throw new AppError('Contact ID or Lead ID is required', 400)
+      throw new AppError("Contact ID or Lead ID is required", 400);
     }
 
-    let resolvedContactId = contactId
-    let phone: string | undefined
-    let displayName: string | undefined
-    let resolvedLeadId = leadId
+    let resolvedContactId = contactId;
+    let phone: string | undefined;
+    let displayName: string | undefined;
+    let resolvedLeadId = leadId;
 
     if (leadId) {
       const lead = await Lead.findOne({
         organizationId,
         _id: Number(leadId),
         deletedAt: null,
-      })
+      });
 
       if (!lead) {
-        throw new AppError('Lead not found in this organization', 404)
+        throw new AppError("Lead not found in this organization", 404);
       }
 
-      phone = lead.phone
+      phone = lead.phone;
       displayName =
-        `${lead.firstName || ''} ${lead.lastName || ''}`.trim() || phone
-      resolvedContactId = lead.contactId || resolvedContactId
-      resolvedLeadId = Number(lead._id)
+        `${lead.firstName || ""} ${lead.lastName || ""}`.trim() || phone;
+      resolvedContactId = lead.contactId || resolvedContactId;
+      resolvedLeadId = Number(lead._id);
     }
 
     if (resolvedContactId) {
@@ -2350,39 +2415,33 @@ private async subscribeWabaToApp(
         _id: resolvedContactId,
         organizationId,
         deletedAt: null,
-      })
+      });
 
       if (!contact) {
-        throw new AppError(
-          'Contact not found in this organization',
-          404,
-        )
+        throw new AppError("Contact not found in this organization", 404);
       }
 
-      phone = phone || contact.phone
+      phone = phone || contact.phone;
       displayName =
         displayName ||
-        `${contact.firstName || ''} ${contact.lastName || ''}`.trim() ||
-        contact.phone
+        `${contact.firstName || ""} ${contact.lastName || ""}`.trim() ||
+        contact.phone;
     }
 
     if (!phone) {
-      throw new AppError('A phone number is required', 400)
+      throw new AppError("A phone number is required", 400);
     }
 
-    const normalizedPhone = this.normalizePhone(phone)
+    const normalizedPhone = this.normalizePhone(phone);
 
     const account = await WhatsAppAccount.findOne({
       organizationId,
       isConnected: true,
       deletedAt: null,
-    })
+    });
 
     if (!account) {
-      throw new AppError(
-        'WhatsApp account is not connected',
-        400,
-      )
+      throw new AppError("WhatsApp account is not connected", 400);
     }
 
     const conversation = await this.getOrCreateConversation(
@@ -2390,7 +2449,7 @@ private async subscribeWabaToApp(
       normalizedPhone,
       account.phoneNumberId,
       account.wabaId,
-    )
+    );
 
     await WhatsAppConversation.updateOne(
       {
@@ -2402,27 +2461,27 @@ private async subscribeWabaToApp(
         ...(resolvedLeadId ? { leadId: resolvedLeadId } : {}),
         ...(displayName ? { contactName: displayName } : {}),
       },
-    )
+    );
 
     const updated = await WhatsAppConversation.findOne({
       organizationId,
       _id: conversation._id,
-    })
+    });
 
     if (!updated) {
-      throw new AppError('Failed to open WhatsApp conversation', 500)
+      throw new AppError("Failed to open WhatsApp conversation", 500);
     }
 
-    return this.serializeConversation(updated)
+    return this.serializeConversation(updated);
   }
 
   async getConversations(
     organizationId: number,
     filters: {
-      status?: string
-      assignedTo?: number
-      search?: string
-      unreadOnly?: boolean
+      status?: string;
+      assignedTo?: number;
+      search?: string;
+      unreadOnly?: boolean;
     } = {},
     page = 1,
     limit = 20,
@@ -2430,20 +2489,20 @@ private async subscribeWabaToApp(
     const query: any = {
       organizationId,
       deletedAt: null,
-    }
+    };
 
-    if (filters.status && filters.status !== 'all') {
-      query.status = filters.status
+    if (filters.status && filters.status !== "all") {
+      query.status = filters.status;
     } else {
-      query.status = { $ne: 'archived' }
+      query.status = { $ne: "archived" };
     }
 
     if (filters.assignedTo) {
-      query.assignedTo = filters.assignedTo
+      query.assignedTo = filters.assignedTo;
     }
 
     if (filters.unreadOnly) {
-      query.unreadCount = { $gt: 0 }
+      query.unreadCount = { $gt: 0 };
     }
 
     if (filters.search) {
@@ -2451,36 +2510,36 @@ private async subscribeWabaToApp(
         {
           customerPhone: {
             $regex: filters.search,
-            $options: 'i',
+            $options: "i",
           },
         },
         {
           contactName: {
             $regex: filters.search,
-            $options: 'i',
+            $options: "i",
           },
         },
-      ]
+      ];
     }
 
-    const skip = Math.max(0, page - 1) * limit
+    const skip = Math.max(0, page - 1) * limit;
 
     const [data, total] = await Promise.all([
       WhatsAppConversation.find(query)
         .sort({ lastMessageAt: -1 })
         .skip(skip)
         .limit(limit)
-        .populate('contactId', 'firstName lastName email phone')
-        .populate('assignedTo', 'firstName lastName email')
+        .populate("contactId", "firstName lastName email phone")
+        .populate("assignedTo", "firstName lastName email")
         .lean(),
 
       WhatsAppConversation.countDocuments(query),
-    ])
+    ]);
 
     return {
       data: data.map((item) => this.serializeConversation(item)),
       total,
-    }
+    };
   }
 
   async getConversationMessages(
@@ -2493,19 +2552,21 @@ private async subscribeWabaToApp(
       organizationId,
       conversationId,
       deletedAt: null,
-    }
+    };
 
     if (before) {
       query.createdAt = {
         $lt: before,
-      }
+      };
     }
 
     return WhatsAppMessage.find(query)
       .sort({ createdAt: -1 })
       .limit(Math.min(limit, 100))
       .lean()
-      .then((messages) => messages.map((message) => this.serializeMessage(message)))
+      .then((messages) =>
+        messages.map((message) => this.serializeMessage(message)),
+      );
   }
 
   async markConversationRead(
@@ -2521,7 +2582,7 @@ private async subscribeWabaToApp(
       {
         unreadCount: 0,
       },
-    )
+    );
   }
 
   async assignConversation(
@@ -2538,7 +2599,7 @@ private async subscribeWabaToApp(
       {
         assignedTo: userId,
       },
-    )
+    );
   }
 
   async archiveConversation(
@@ -2552,10 +2613,10 @@ private async subscribeWabaToApp(
         deletedAt: null,
       },
       {
-        status: 'archived',
+        status: "archived",
         isArchived: true,
       },
-    )
+    );
   }
 
   async getUnreadCount(organizationId: number): Promise<number> {
@@ -2564,7 +2625,7 @@ private async subscribeWabaToApp(
         $match: {
           organizationId,
           deletedAt: null,
-          status: { $ne: 'archived' },
+          status: { $ne: "archived" },
           unreadCount: { $gt: 0 },
         },
       },
@@ -2572,13 +2633,13 @@ private async subscribeWabaToApp(
         $group: {
           _id: null,
           total: {
-            $sum: '$unreadCount',
+            $sum: "$unreadCount",
           },
         },
       },
-    ])
+    ]);
 
-    return result[0]?.total || 0
+    return result[0]?.total || 0;
   }
 
   // ============================================================
@@ -2590,58 +2651,47 @@ private async subscribeWabaToApp(
     payload: any,
     options: { skipLog?: boolean } = {},
   ): Promise<void> {
-    let webhookLog: any = null
+    let webhookLog: any = null;
 
     try {
       if (!options.skipLog) {
         webhookLog = await WhatsAppWebhookLog.create({
           organizationId: organizationId || undefined,
-          event:
-            payload?.entry?.[0]?.changes?.[0]?.field ||
-            'unknown',
+          event: payload?.entry?.[0]?.changes?.[0]?.field || "unknown",
           payload,
           headers: {},
           processed: false,
-        })
+        });
       }
 
       if (!organizationId) {
         logger.warn(
-          'WhatsApp webhook received but organization could not be resolved',
-        )
+          "WhatsApp webhook received but organization could not be resolved",
+        );
 
-        return
+        return;
       }
 
-      const entries = payload?.entry || []
+      const entries = payload?.entry || [];
 
       for (const entry of entries) {
         for (const change of entry.changes || []) {
-          const value = change?.value
+          const value = change?.value;
 
           if (!value) {
-            continue
+            continue;
           }
 
           if (Array.isArray(value.messages) && value.messages.length) {
-            await this.processMessages(
-              organizationId,
-              value,
-            )
+            await this.processMessages(organizationId, value);
           }
 
           if (Array.isArray(value.statuses) && value.statuses.length) {
-            await this.processStatusUpdates(
-              organizationId,
-              value.statuses,
-            )
+            await this.processStatusUpdates(organizationId, value.statuses);
           }
 
           if (Array.isArray(value.contacts) && value.contacts.length) {
-            await this.processContacts(
-              organizationId,
-              value.contacts,
-            )
+            await this.processContacts(organizationId, value.contacts);
           }
         }
       }
@@ -2656,13 +2706,10 @@ private async subscribeWabaToApp(
             processed: true,
             processedAt: new Date(),
           },
-        )
+        );
       }
     } catch (error: any) {
-      logger.error(
-        'Error processing WhatsApp webhook:',
-        error.message,
-      )
+      logger.error("Error processing WhatsApp webhook:", error.message);
 
       if (webhookLog?._id) {
         await WhatsAppWebhookLog.updateOne(
@@ -2673,10 +2720,10 @@ private async subscribeWabaToApp(
             processed: false,
             errorMessage: error.message,
           },
-        )
+        );
       }
 
-      throw error
+      throw error;
     }
   }
 
@@ -2684,46 +2731,40 @@ private async subscribeWabaToApp(
     organizationId: number,
     value: any,
   ): Promise<void> {
-    const messages = value.messages || []
+    const messages = value.messages || [];
 
     for (const message of messages) {
-      const from = message?.from
-      const phoneNumberId = value.metadata?.phone_number_id
+      const from = message?.from;
+      const phoneNumberId = value.metadata?.phone_number_id;
       const wabaId =
-        value.metadata?.waba_id ||
-        value.metadata?.business_account_id
+        value.metadata?.waba_id || value.metadata?.business_account_id;
 
       if (!from || !phoneNumberId || !wabaId || !message.id) {
-        logger.warn(
-          'WhatsApp webhook message missing required fields',
-        )
+        logger.warn("WhatsApp webhook message missing required fields");
 
-        continue
+        continue;
       }
 
       // Prevent duplicate inbound webhook processing.
-      const existingMessage =
-        await WhatsAppMessage.findOne({
-          organizationId,
-          messageId: message.id,
-        })
+      const existingMessage = await WhatsAppMessage.findOne({
+        organizationId,
+        messageId: message.id,
+      });
 
       if (existingMessage) {
-        continue
+        continue;
       }
 
-      const conversation =
-        await this.getOrCreateConversation(
-          organizationId,
-          from,
-          phoneNumberId,
-          wabaId,
-        )
+      const conversation = await this.getOrCreateConversation(
+        organizationId,
+        from,
+        phoneNumberId,
+        wabaId,
+      );
 
       const contactProfile = value.contacts?.find(
-        (item: any) =>
-          item?.wa_id === String(from),
-      )
+        (item: any) => item?.wa_id === String(from),
+      );
 
       await WhatsAppMessage.create({
         organizationId,
@@ -2731,12 +2772,12 @@ private async subscribeWabaToApp(
         messageId: message.id,
         from,
         to: phoneNumberId,
-        direction: 'inbound',
+        direction: "inbound",
         type: message.type,
         content: message,
-        status: 'delivered',
+        status: "delivered",
         deliveredAt: new Date(),
-      })
+      });
 
       await WhatsAppConversation.updateOne(
         {
@@ -2747,39 +2788,38 @@ private async subscribeWabaToApp(
           lastMessageAt: new Date(),
           lastMessage: this.getWebhookMessagePreview(message),
           unreadCount: (conversation.unreadCount || 0) + 1,
-          status: 'active',
+          status: "active",
           isArchived: false,
           ...(contactProfile?.profile?.name
             ? {
-                contactName:
-                  contactProfile.profile.name,
+                contactName: contactProfile.profile.name,
               }
             : {}),
         },
-      )
+      );
 
       await this.linkCrmRecordsToConversation(
         organizationId,
         from,
         conversation._id,
         contactProfile?.profile?.name,
-      )
+      );
     }
   }
 
   private getWebhookMessagePreview(message: any): string {
-    if (message.type === 'text') {
-      return message.text?.body || ''
+    if (message.type === "text") {
+      return message.text?.body || "";
     }
 
-    if (message.type === 'image') return '[Image]'
-    if (message.type === 'video') return '[Video]'
-    if (message.type === 'audio') return '[Audio]'
-    if (message.type === 'document') return '[Document]'
-    if (message.type === 'location') return '[Location]'
-    if (message.type === 'interactive') return '[Interactive]'
+    if (message.type === "image") return "[Image]";
+    if (message.type === "video") return "[Video]";
+    if (message.type === "audio") return "[Audio]";
+    if (message.type === "document") return "[Document]";
+    if (message.type === "location") return "[Location]";
+    if (message.type === "interactive") return "[Interactive]";
 
-    return `[${message.type || 'Message'}]`
+    return `[${message.type || "Message"}]`;
   }
 
   private async processStatusUpdates(
@@ -2788,45 +2828,42 @@ private async subscribeWabaToApp(
   ): Promise<void> {
     for (const status of statuses) {
       if (!status?.id || !status?.status) {
-        continue
+        continue;
       }
 
       const message = await WhatsAppMessage.findOne({
         organizationId,
         messageId: status.id,
-      })
+      });
 
       if (!message) {
-        continue
+        continue;
       }
 
       const updateData: any = {
         status: status.status,
-      }
+      };
 
       if (status.errors?.[0]) {
-        updateData.statusCode =
-          status.errors[0].code
+        updateData.statusCode = status.errors[0].code;
 
-        updateData.errorMessage =
-          status.errors[0].message
+        updateData.errorMessage = status.errors[0].message;
       }
 
-      if (status.status === 'sent') {
-        updateData.sentAt =
-          message.sentAt || new Date()
+      if (status.status === "sent") {
+        updateData.sentAt = message.sentAt || new Date();
       }
 
-      if (status.status === 'delivered') {
-        updateData.deliveredAt = new Date()
+      if (status.status === "delivered") {
+        updateData.deliveredAt = new Date();
       }
 
-      if (status.status === 'read') {
-        updateData.readAt = new Date()
+      if (status.status === "read") {
+        updateData.readAt = new Date();
       }
 
-      if (status.status === 'failed') {
-        updateData.status = 'failed'
+      if (status.status === "failed") {
+        updateData.status = "failed";
       }
 
       await WhatsAppMessage.updateOne(
@@ -2835,39 +2872,36 @@ private async subscribeWabaToApp(
           messageId: status.id,
         },
         updateData,
-      )
+      );
 
-      const campaignRecipient =
-        await WhatsAppCampaignRecipient.findOne({
-          organizationId,
-          messageId: status.id,
-        })
+      const campaignRecipient = await WhatsAppCampaignRecipient.findOne({
+        organizationId,
+        messageId: status.id,
+      });
 
       if (!campaignRecipient) {
-        continue
+        continue;
       }
 
       const recipientUpdate: any = {
         status: status.status,
+      };
+
+      if (status.status === "sent") {
+        recipientUpdate.sentAt = campaignRecipient.sentAt || new Date();
       }
 
-      if (status.status === 'sent') {
-        recipientUpdate.sentAt =
-          campaignRecipient.sentAt || new Date()
+      if (status.status === "delivered") {
+        recipientUpdate.deliveredAt = new Date();
       }
 
-      if (status.status === 'delivered') {
-        recipientUpdate.deliveredAt = new Date()
+      if (status.status === "read") {
+        recipientUpdate.readAt = new Date();
       }
 
-      if (status.status === 'read') {
-        recipientUpdate.readAt = new Date()
-      }
-
-      if (status.status === 'failed') {
+      if (status.status === "failed") {
         recipientUpdate.errorMessage =
-          status.errors?.[0]?.message ||
-          'WhatsApp message failed'
+          status.errors?.[0]?.message || "WhatsApp message failed";
       }
 
       await WhatsAppCampaignRecipient.updateOne(
@@ -2876,12 +2910,12 @@ private async subscribeWabaToApp(
           _id: campaignRecipient._id,
         },
         recipientUpdate,
-      )
+      );
 
       await this.recalculateCampaignStats(
         organizationId,
         campaignRecipient.campaignId,
-      )
+      );
     }
   }
 
@@ -2890,45 +2924,43 @@ private async subscribeWabaToApp(
     contacts: any[],
   ): Promise<void> {
     for (const metaContact of contacts) {
-      const phone = metaContact?.wa_id
+      const phone = metaContact?.wa_id;
 
       if (!phone) {
-        continue
+        continue;
       }
 
       try {
-        const normalizedPhone =
-          this.normalizePhone(phone)
+        const normalizedPhone = this.normalizePhone(phone);
 
-        const contact =
-          await Contact.findOne({
-            organizationId,
-            phone: normalizedPhone,
-            deletedAt: null,
-          })
+        const contact = await Contact.findOne({
+          organizationId,
+          phone: normalizedPhone,
+          deletedAt: null,
+        });
 
         if (contact) {
-          continue
+          continue;
         }
 
         // Do not invent a Contact schema shape here.
         // Existing CRM contacts should be linked when they already exist.
         logger.info(
           `WhatsApp contact ${normalizedPhone} is not linked to an existing CRM contact`,
-        )
+        );
       } catch (error: any) {
         logger.error(
           `Error processing WhatsApp contact ${phone}:`,
           error.message,
-        )
+        );
       }
     }
   }
 
   private phoneLookupValues(phone: string): string[] {
-    const normalized = this.normalizePhone(phone)
-    const digits = normalized.replace(/\D/g, '')
-    const last10 = digits.slice(-10)
+    const normalized = this.normalizePhone(phone);
+    const digits = normalized.replace(/\D/g, "");
+    const last10 = digits.slice(-10);
 
     return Array.from(
       new Set(
@@ -2941,7 +2973,7 @@ private async subscribeWabaToApp(
           `91${last10}`,
         ].filter(Boolean),
       ),
-    )
+    );
   }
 
   private async linkCrmRecordsToConversation(
@@ -2952,11 +2984,11 @@ private async subscribeWabaToApp(
     createMissingContact = true,
   ): Promise<void> {
     try {
-      const variants = this.phoneLookupValues(phoneNumber)
+      const variants = this.phoneLookupValues(phoneNumber);
       const last10 = variants
-        .map((value) => value.replace(/\D/g, ''))
+        .map((value) => value.replace(/\D/g, ""))
         .sort((a, b) => b.length - a.length)[0]
-        ?.slice(-10)
+        ?.slice(-10);
 
       const phoneQuery = {
         organizationId,
@@ -2971,23 +3003,25 @@ private async subscribeWabaToApp(
               ]
             : []),
         ],
-      }
+      };
 
-      let contact = await Contact.findOne(phoneQuery)
-      const lead = await Lead.findOne(phoneQuery)
+      let contact = await Contact.findOne(phoneQuery);
+      const lead = await Lead.findOne(phoneQuery);
 
       if (!contact && lead?.contactId) {
         contact = await Contact.findOne({
           organizationId,
           _id: lead.contactId,
           deletedAt: null,
-        })
+        });
       }
 
       if (!contact && createMissingContact) {
-        const nameParts = String(profileName || 'WhatsApp').trim().split(/\s+/)
-        const firstName = nameParts.shift() || 'WhatsApp'
-        const lastName = nameParts.join(' ')
+        const nameParts = String(profileName || "WhatsApp")
+          .trim()
+          .split(/\s+/);
+        const firstName = nameParts.shift() || "WhatsApp";
+        const lastName = nameParts.join(" ");
 
         contact = await Contact.create({
           organizationId,
@@ -2995,11 +3029,11 @@ private async subscribeWabaToApp(
           lastName,
           phone: this.normalizePhone(phoneNumber),
           email: null,
-        })
+        });
       }
 
       if (!contact && !lead) {
-        return
+        return;
       }
 
       await WhatsAppConversation.updateOne(
@@ -3014,23 +3048,21 @@ private async subscribeWabaToApp(
             ? {
                 contactName:
                   profileName ||
-                  `${contact?.firstName || ''} ${contact?.lastName || ''}`.trim(),
+                  `${contact?.firstName || ""} ${contact?.lastName || ""}`.trim(),
               }
             : {}),
         },
-      )
+      );
     } catch (error: any) {
       logger.error(
-        'Error linking WhatsApp conversation to CRM records:',
+        "Error linking WhatsApp conversation to CRM records:",
         error.message,
-      )
+      );
     }
   }
 
   private serializeConversation(conversation: any) {
-    const data = conversation.toObject
-      ? conversation.toObject()
-      : conversation
+    const data = conversation.toObject ? conversation.toObject() : conversation;
 
     return {
       id: data._id,
@@ -3040,34 +3072,35 @@ private async subscribeWabaToApp(
       phoneNumber: data.customerPhone,
       customerPhone: data.customerPhone,
       contactName: data.contactName || null,
-      lastMessage: data.lastMessage || '',
+      lastMessage: data.lastMessage || "",
       lastMessageAt: data.lastMessageAt,
       unreadCount: data.unreadCount || 0,
       status: data.status,
       assignedTo: data.assignedTo || null,
-      contact: data.contactId && typeof data.contactId === 'object'
-        ? data.contactId
-        : undefined,
+      contact:
+        data.contactId && typeof data.contactId === "object"
+          ? data.contactId
+          : undefined,
       createdAt: data.createdAt,
       updatedAt: data.updatedAt,
-    }
+    };
   }
 
   private serializeMessage(message: any) {
-    const data = message?.toObject ? message.toObject() : message
+    const data = message?.toObject ? message.toObject() : message;
 
-    let text = ''
+    let text = "";
 
-    if (typeof data.content === 'string') {
-      text = data.content
+    if (typeof data.content === "string") {
+      text = data.content;
     } else if (data.content?.text?.body) {
-      text = data.content.text.body
+      text = data.content.text.body;
     } else if (data.content?.body) {
-      text = String(data.content.body)
+      text = String(data.content.body);
     } else if (data.content?.name) {
-      text = `[Template: ${data.content.name}]`
-    } else if (data.type && data.type !== 'text') {
-      text = `[${data.type}]`
+      text = `[Template: ${data.content.name}]`;
+    } else if (data.type && data.type !== "text") {
+      text = `[${data.type}]`;
     }
 
     return {
@@ -3085,7 +3118,7 @@ private async subscribeWabaToApp(
       timestamp: data.sentAt || data.createdAt,
       createdAt: data.createdAt,
       updatedAt: data.updatedAt,
-    }
+    };
   }
 
   private async linkContactToConversation(
@@ -3097,7 +3130,7 @@ private async subscribeWabaToApp(
       organizationId,
       phoneNumber,
       conversationId,
-    )
+    );
   }
 
   // ============================================================
@@ -3107,106 +3140,86 @@ private async subscribeWabaToApp(
   async createCampaign(
     organizationId: number,
     campaignData: {
-      name: string
-      templateId: number
-      recipients: string[]
-      variables: Record<string, any>
-      scheduledAt?: Date
-      createdBy: number
+      name: string;
+      templateId: number;
+      recipients: string[];
+      variables: Record<string, any>;
+      scheduledAt?: Date;
+      createdBy: number;
     },
   ): Promise<any> {
-    const template =
-      await WhatsAppMetaTemplate.findOne({
-        organizationId,
-        _id: campaignData.templateId,
-        deletedAt: null,
-      })
+    const template = await WhatsAppMetaTemplate.findOne({
+      organizationId,
+      _id: campaignData.templateId,
+      deletedAt: null,
+    });
 
     if (!template) {
-      throw new AppError(
-        'WhatsApp template not found',
-        404,
-      )
+      throw new AppError("WhatsApp template not found", 404);
     }
 
-    if (template.status !== 'APPROVED') {
+    if (template.status !== "APPROVED") {
       throw new AppError(
         `WhatsApp template is ${template.status}. Only APPROVED templates can be used for campaigns.`,
         400,
-      )
+      );
     }
 
     if (!campaignData.recipients?.length) {
-      throw new AppError(
-        'At least one recipient is required',
-        400,
-      )
+      throw new AppError("At least one recipient is required", 400);
     }
 
-    const normalizedRecipients =
-      this.normalizeAndDeduplicateRecipients(
-        campaignData.recipients,
-      )
+    const normalizedRecipients = this.normalizeAndDeduplicateRecipients(
+      campaignData.recipients,
+    );
 
     if (!normalizedRecipients.length) {
-      throw new AppError(
-        'No valid WhatsApp recipients were provided',
-        400,
-      )
+      throw new AppError("No valid WhatsApp recipients were provided", 400);
     }
 
-    const campaign =
-      await WhatsAppCampaign.create({
-        organizationId,
-        name: campaignData.name.trim(),
-        templateId: campaignData.templateId,
-        status: 'queued',
-        recipients: normalizedRecipients,
-        variables: campaignData.variables || {},
-        scheduledAt:
-          campaignData.scheduledAt || new Date(),
-        stats: {
-          total: normalizedRecipients.length,
-          sent: 0,
-          delivered: 0,
-          read: 0,
-          failed: 0,
-          replied: 0,
-        },
-        createdBy: campaignData.createdBy,
-      })
+    const campaign = await WhatsAppCampaign.create({
+      organizationId,
+      name: campaignData.name.trim(),
+      templateId: campaignData.templateId,
+      status: "queued",
+      recipients: normalizedRecipients,
+      variables: campaignData.variables || {},
+      scheduledAt: campaignData.scheduledAt || new Date(),
+      stats: {
+        total: normalizedRecipients.length,
+        sent: 0,
+        delivered: 0,
+        read: 0,
+        failed: 0,
+        replied: 0,
+      },
+      createdBy: campaignData.createdBy,
+    });
 
-    const recipientDocuments =
-      normalizedRecipients.map((phone) => ({
-        organizationId,
-        campaignId: campaign._id,
-        phoneNumber: phone,
-        status: 'pending',
-      }))
+    const recipientDocuments = normalizedRecipients.map((phone) => ({
+      organizationId,
+      campaignId: campaign._id,
+      phoneNumber: phone,
+      status: "pending",
+    }));
 
-    await WhatsAppCampaignRecipient.insertMany(
-      recipientDocuments,
-    )
+    await WhatsAppCampaignRecipient.insertMany(recipientDocuments);
 
-    return campaign
+    return campaign;
   }
 
-  private normalizeAndDeduplicateRecipients(
-    recipients: string[],
-  ): string[] {
-    const unique = new Set<string>()
+  private normalizeAndDeduplicateRecipients(recipients: string[]): string[] {
+    const unique = new Set<string>();
 
     for (const recipient of recipients) {
       try {
-        unique.add(
-          this.normalizePhone(recipient),
-        )
+        unique.add(this.normalizePhone(recipient));
       } catch {
         // Invalid recipients are excluded from the campaign.
       }
     }
 
-    return Array.from(unique)
+    return Array.from(unique);
   }
 
   /**
@@ -3214,188 +3227,153 @@ private async subscribeWabaToApp(
    *
    * This is intended to be called by whatsapp.cron.ts.
    */
-  async executeCampaign(
-    campaignId: number,
-  ): Promise<void> {
+  async executeCampaign(campaignId: number): Promise<void> {
     // Atomically claim the campaign.
-    const campaign =
-      await WhatsAppCampaign.findOneAndUpdate(
-        {
-          _id: campaignId,
-          deletedAt: null,
-          status: {
-            $in: ['queued', 'draft'],
+    const campaign = await WhatsAppCampaign.findOneAndUpdate(
+      {
+        _id: campaignId,
+        deletedAt: null,
+        status: {
+          $in: ["queued", "draft"],
+        },
+        $or: [
+          {
+            scheduledAt: {
+              $exists: false,
+            },
           },
-          $or: [
-            {
-              scheduledAt: {
-                $exists: false,
-              },
+          {
+            scheduledAt: null,
+          },
+          {
+            scheduledAt: {
+              $lte: new Date(),
             },
-            {
-              scheduledAt: null,
-            },
-            {
-              scheduledAt: {
-                $lte: new Date(),
-              },
-            },
-          ],
-        },
-        {
-          status: 'running',
-          sentAt: new Date(),
-        },
-        {
-          new: true,
-        },
-      )
+          },
+        ],
+      },
+      {
+        status: "running",
+        sentAt: new Date(),
+      },
+      {
+        new: true,
+      },
+    );
 
     if (!campaign) {
-      return
+      return;
     }
 
-    const organizationId =
-      campaign.organizationId
+    const organizationId = campaign.organizationId;
 
     try {
-      const { account } =
-        await this.getAccountWithToken(
-          organizationId,
-        )
+      const { account } = await this.getAccountWithToken(organizationId);
 
-      const template =
-        await WhatsAppMetaTemplate.findOne({
-          organizationId,
-          _id: campaign.templateId,
-          deletedAt: null,
-        })
+      const template = await WhatsAppMetaTemplate.findOne({
+        organizationId,
+        _id: campaign.templateId,
+        deletedAt: null,
+      });
 
       if (!template) {
-        throw new AppError(
-          'Campaign template not found',
-          404,
-        )
+        throw new AppError("Campaign template not found", 404);
       }
 
-      if (template.status !== 'APPROVED') {
-        throw new AppError(
-          'Campaign template is no longer approved',
-          400,
-        )
+      if (template.status !== "APPROVED") {
+        throw new AppError("Campaign template is no longer approved", 400);
       }
 
-      const batchSize = 10
-      const delayBetweenBatchesMs =
-        this.getCampaignBatchDelay()
+      const batchSize = 10;
+      const delayBetweenBatchesMs = this.getCampaignBatchDelay();
 
       while (true) {
-        const recipients =
-          await WhatsAppCampaignRecipient.find({
-            organizationId,
-            campaignId: campaign._id,
-            status: 'pending',
-          })
-            .sort({ _id: 1 })
-            .limit(batchSize)
-            .lean()
+        const recipients = await WhatsAppCampaignRecipient.find({
+          organizationId,
+          campaignId: campaign._id,
+          status: "pending",
+        })
+          .sort({ _id: 1 })
+          .limit(batchSize)
+          .lean();
 
         if (!recipients.length) {
-          break
+          break;
         }
 
         for (const recipient of recipients) {
-          const currentCampaign =
-            await WhatsAppCampaign.findOne({
-              organizationId,
-              _id: campaign._id,
-              status: 'running',
-              deletedAt: null,
-            }).lean()
+          const currentCampaign = await WhatsAppCampaign.findOne({
+            organizationId,
+            _id: campaign._id,
+            status: "running",
+            deletedAt: null,
+          }).lean();
 
           if (!currentCampaign) {
-            return
+            return;
           }
 
           try {
-            const templateComponents =
-              this.buildCampaignTemplateComponents(
-                template.components || [],
-                campaign.variables || {},
-              )
+            const templateComponents = this.buildCampaignTemplateComponents(
+              template.components || [],
+              campaign.variables || {},
+            );
 
-            await this.sendMessage(
-              organizationId,
-              {
-                to: recipient.phoneNumber,
-                type: 'template',
-                content: {},
-                templateName: template.name,
-                templateLanguage:
-                  template.language || 'en_US',
-                templateComponents,
-                metadata: {
-                  campaignId:
-                    campaign._id,
-                  campaignRecipientId:
-                    recipient._id,
-                },
+            await this.sendMessage(organizationId, {
+              to: recipient.phoneNumber,
+              type: "template",
+              content: {},
+              templateName: template.name,
+              templateLanguage: template.language || "en_US",
+              templateComponents,
+              metadata: {
+                campaignId: campaign._id,
+                campaignRecipientId: recipient._id,
               },
-            )
+            });
           } catch (error: any) {
             await WhatsAppCampaignRecipient.updateOne(
               {
                 organizationId,
                 _id: recipient._id,
-                status: 'pending',
+                status: "pending",
               },
               {
-                status: 'failed',
+                status: "failed",
                 errorMessage:
-                  error.message ||
-                  'Failed to send WhatsApp message',
+                  error.message || "Failed to send WhatsApp message",
               },
-            )
+            );
 
             logger.error(
               `Campaign ${campaign._id}: failed to send ${recipient.phoneNumber}:`,
               error.message,
-            )
+            );
           }
         }
 
-        await this.recalculateCampaignStats(
-          organizationId,
-          campaign._id,
-        )
+        await this.recalculateCampaignStats(organizationId, campaign._id);
 
         if (recipients.length === batchSize) {
-          await this.sleep(
-            delayBetweenBatchesMs,
-          )
+          await this.sleep(delayBetweenBatchesMs);
         }
       }
 
-      await this.recalculateCampaignStats(
-        organizationId,
-        campaign._id,
-      )
+      await this.recalculateCampaignStats(organizationId, campaign._id);
 
       await WhatsAppCampaign.updateOne(
         {
           organizationId,
           _id: campaign._id,
-          status: 'running',
+          status: "running",
         },
         {
-          status: 'completed',
+          status: "completed",
           completedAt: new Date(),
         },
-      )
+      );
 
-      logger.info(
-        `WhatsApp campaign ${campaign._id} completed`,
-      )
+      logger.info(`WhatsApp campaign ${campaign._id} completed`);
     } catch (error: any) {
       await WhatsAppCampaign.updateOne(
         {
@@ -3403,16 +3381,13 @@ private async subscribeWabaToApp(
           _id: campaign._id,
         },
         {
-          status: 'failed',
+          status: "failed",
         },
-      )
+      );
 
-      logger.error(
-        `WhatsApp campaign ${campaign._id} failed:`,
-        error.message,
-      )
+      logger.error(`WhatsApp campaign ${campaign._id} failed:`, error.message);
 
-      throw error
+      throw error;
     }
   }
 
@@ -3420,126 +3395,97 @@ private async subscribeWabaToApp(
     components: any[],
     variables: Record<string, any>,
   ): any[] {
-    const result: any[] = []
+    const result: any[] = [];
 
     for (const component of components) {
-      if (
-        component.type === 'BODY' &&
-        component.text
-      ) {
-        const bodyMatches =
-          component.text.match(
-            /{{\s*([^}]+?)\s*}}/g,
-          ) || []
+      if (component.type === "BODY" && component.text) {
+        const bodyMatches = component.text.match(/{{\s*([^}]+?)\s*}}/g) || [];
 
         if (!bodyMatches.length) {
-          continue
+          continue;
         }
 
-        const parameters = bodyMatches.map(
-          (match: string) => {
-            const key = match
-              .replace('{{', '')
-              .replace('}}', '')
-              .trim()
+        const parameters = bodyMatches.map((match: string) => {
+          const key = match.replace("{{", "").replace("}}", "").trim();
 
-            return {
-              type: 'text',
-              text: String(
-                variables[key] ??
-                  variables[String(
-                    bodyMatches.indexOf(match) + 1,
-                  )] ??
-                  '',
-              ),
-            }
-          },
-        )
+          return {
+            type: "text",
+            text: String(
+              variables[key] ??
+                variables[String(bodyMatches.indexOf(match) + 1)] ??
+                "",
+            ),
+          };
+        });
 
         result.push({
-          type: 'body',
+          type: "body",
           parameters,
-        })
+        });
 
-        continue
+        continue;
       }
 
       if (
-        component.type === 'HEADER' &&
-        component.format === 'TEXT' &&
+        component.type === "HEADER" &&
+        component.format === "TEXT" &&
         component.text
       ) {
-        const matches =
-          component.text.match(
-            /{{\s*([^}]+?)\s*}}/g,
-          ) || []
+        const matches = component.text.match(/{{\s*([^}]+?)\s*}}/g) || [];
 
         if (matches.length) {
           result.push({
-            type: 'header',
-            parameters: matches.map(
-              (match: string) => {
-                const key = match
-                  .replace('{{', '')
-                  .replace('}}', '')
-                  .trim()
+            type: "header",
+            parameters: matches.map((match: string) => {
+              const key = match.replace("{{", "").replace("}}", "").trim();
 
-                return {
-                  type: 'text',
-                  text: String(
-                    variables[key] ?? '',
-                  ),
-                }
-              },
-            ),
-          })
+              return {
+                type: "text",
+                text: String(variables[key] ?? ""),
+              };
+            }),
+          });
         }
       }
     }
 
-    return result
+    return result;
   }
 
   private getCampaignBatchDelay(): number {
-    const value = Number(
-      process.env.WHATSAPP_CAMPAIGN_BATCH_DELAY_MS ||
-        1000,
-    )
+    const value = Number(process.env.WHATSAPP_CAMPAIGN_BATCH_DELAY_MS || 1000);
 
     if (!Number.isFinite(value) || value < 0) {
-      return 1000
+      return 1000;
     }
 
-    return value
+    return value;
   }
 
   private sleep(ms: number): Promise<void> {
-    return new Promise((resolve) =>
-      setTimeout(resolve, ms),
-    )
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   private async recalculateCampaignStats(
     organizationId: number,
     campaignId: number,
   ): Promise<void> {
-    const grouped =
-      await WhatsAppCampaignRecipient.aggregate([
-        {
-          $match: {
-            organizationId,
-            campaignId,
+    const grouped = await WhatsAppCampaignRecipient.aggregate([
+      {
+        $match: {
+          organizationId,
+          campaignId,
+        },
+      },
+      {
+        $group: {
+          _id: "$status",
+          count: {
+            $sum: 1,
           },
         },
-        {
-          $group: {
-            _id: '$status',
-            count: {
-              $sum: 1,
-            },
-          },
-        },
-      ])
+      },
+    ]);
 
     const stats = {
       total: 0,
@@ -3548,28 +3494,28 @@ private async subscribeWabaToApp(
       read: 0,
       failed: 0,
       replied: 0,
-    }
+    };
 
     for (const item of grouped) {
-      const status = item._id
-      const count = Number(item.count || 0)
+      const status = item._id;
+      const count = Number(item.count || 0);
 
-      stats.total += count
+      stats.total += count;
 
-      if (status === 'sent') {
-        stats.sent += count
+      if (status === "sent") {
+        stats.sent += count;
       }
 
-      if (status === 'delivered') {
-        stats.delivered += count
+      if (status === "delivered") {
+        stats.delivered += count;
       }
 
-      if (status === 'read') {
-        stats.read += count
+      if (status === "read") {
+        stats.read += count;
       }
 
-      if (status === 'failed') {
-        stats.failed += count
+      if (status === "failed") {
+        stats.failed += count;
       }
     }
 
@@ -3581,7 +3527,7 @@ private async subscribeWabaToApp(
       {
         stats,
       },
-    )
+    );
   }
 
   async getCampaigns(
@@ -3589,106 +3535,80 @@ private async subscribeWabaToApp(
     page = 1,
     limit = 20,
   ): Promise<{
-    data: any[]
-    total: number
+    data: any[];
+    total: number;
   }> {
     const query = {
       organizationId,
       deletedAt: null,
-    }
+    };
 
-    const skip = Math.max(0, page - 1) * limit
+    const skip = Math.max(0, page - 1) * limit;
 
-    const [data, total] =
-      await Promise.all([
-        WhatsAppCampaign.find(query)
-          .sort({
-            createdAt: -1,
-          })
-          .skip(skip)
-          .limit(Math.min(limit, 100))
-          .populate(
-            'templateId',
-            'name category language status',
-          )
-          .populate(
-            'createdBy',
-            'firstName lastName email',
-          )
-          .lean(),
+    const [data, total] = await Promise.all([
+      WhatsAppCampaign.find(query)
+        .sort({
+          createdAt: -1,
+        })
+        .skip(skip)
+        .limit(Math.min(limit, 100))
+        .populate("templateId", "name category language status")
+        .populate("createdBy", "firstName lastName email")
+        .lean(),
 
-        WhatsAppCampaign.countDocuments(
-          query,
-        ),
-      ])
+      WhatsAppCampaign.countDocuments(query),
+    ]);
 
     return {
       data,
       total,
-    }
+    };
   }
 
   async getCampaignStats(
     organizationId: number,
     campaignId: number,
   ): Promise<any> {
-    const campaign =
-      await WhatsAppCampaign.findOne({
-        organizationId,
-        _id: campaignId,
-        deletedAt: null,
-      })
-        .populate(
-          'templateId',
-          'name category language status',
-        )
-        .populate(
-          'createdBy',
-          'firstName lastName email',
-        )
-        .lean()
+    const campaign = await WhatsAppCampaign.findOne({
+      organizationId,
+      _id: campaignId,
+      deletedAt: null,
+    })
+      .populate("templateId", "name category language status")
+      .populate("createdBy", "firstName lastName email")
+      .lean();
 
     if (!campaign) {
-      throw new AppError(
-        'Campaign not found',
-        404,
-      )
+      throw new AppError("Campaign not found", 404);
     }
 
-    const recipientStats =
-      await WhatsAppCampaignRecipient.aggregate(
-        [
-          {
-            $match: {
-              organizationId,
-              campaignId,
-            },
+    const recipientStats = await WhatsAppCampaignRecipient.aggregate([
+      {
+        $match: {
+          organizationId,
+          campaignId,
+        },
+      },
+      {
+        $group: {
+          _id: "$status",
+          count: {
+            $sum: 1,
           },
-          {
-            $group: {
-              _id: '$status',
-              count: {
-                $sum: 1,
-              },
-            },
-          },
-        ],
-      )
+        },
+      },
+    ]);
 
-    const stats: Record<
-      string,
-      number
-    > = {}
+    const stats: Record<string, number> = {};
 
     for (const item of recipientStats) {
-      stats[item._id] =
-        Number(item.count || 0)
+      stats[item._id] = Number(item.count || 0);
     }
 
     return {
       ...campaign,
       recipientStats: stats,
-    }
+    };
   }
 
   async getCampaignRecipients(
@@ -3697,67 +3617,50 @@ private async subscribeWabaToApp(
     page = 1,
     limit = 20,
   ): Promise<{
-    data: any[]
-    total: number
+    data: any[];
+    total: number;
   }> {
     const query = {
       organizationId,
       campaignId,
-    }
+    };
 
-    const skip =
-      Math.max(0, page - 1) * limit
+    const skip = Math.max(0, page - 1) * limit;
 
-    const [data, total] =
-      await Promise.all([
-        WhatsAppCampaignRecipient.find(
-          query,
-        )
-          .sort({
-            _id: 1,
-          })
-          .skip(skip)
-          .limit(Math.min(limit, 100))
-          .populate(
-            'contactId',
-            'firstName lastName email phone',
-          )
-          .lean(),
+    const [data, total] = await Promise.all([
+      WhatsAppCampaignRecipient.find(query)
+        .sort({
+          _id: 1,
+        })
+        .skip(skip)
+        .limit(Math.min(limit, 100))
+        .populate("contactId", "firstName lastName email phone")
+        .lean(),
 
-        WhatsAppCampaignRecipient.countDocuments(
-          query,
-        ),
-      ])
+      WhatsAppCampaignRecipient.countDocuments(query),
+    ]);
 
     return {
       data,
       total,
-    }
+    };
   }
 
   async cancelCampaign(
     organizationId: number,
     campaignId: number,
   ): Promise<void> {
-    const campaign =
-      await WhatsAppCampaign.findOne({
-        organizationId,
-        _id: campaignId,
-        deletedAt: null,
-        status: {
-          $in: [
-            'draft',
-            'queued',
-            'running',
-          ],
-        },
-      })
+    const campaign = await WhatsAppCampaign.findOne({
+      organizationId,
+      _id: campaignId,
+      deletedAt: null,
+      status: {
+        $in: ["draft", "queued", "running"],
+      },
+    });
 
     if (!campaign) {
-      throw new AppError(
-        'Campaign not found or cannot be cancelled',
-        404,
-      )
+      throw new AppError("Campaign not found or cannot be cancelled", 404);
     }
 
     await WhatsAppCampaign.updateOne(
@@ -3766,36 +3669,27 @@ private async subscribeWabaToApp(
         _id: campaignId,
       },
       {
-        status: 'cancelled',
+        status: "cancelled",
       },
-    )
+    );
   }
 
   async deleteCampaign(
     organizationId: number,
     campaignId: number,
   ): Promise<void> {
-    const campaign =
-      await WhatsAppCampaign.findOne({
-        organizationId,
-        _id: campaignId,
-        deletedAt: null,
-      })
+    const campaign = await WhatsAppCampaign.findOne({
+      organizationId,
+      _id: campaignId,
+      deletedAt: null,
+    });
 
     if (!campaign) {
-      throw new AppError(
-        'Campaign not found',
-        404,
-      )
+      throw new AppError("Campaign not found", 404);
     }
 
-    if (
-      campaign.status === 'running'
-    ) {
-      throw new AppError(
-        'Running campaigns cannot be deleted',
-        400,
-      )
+    if (campaign.status === "running") {
+      throw new AppError("Running campaigns cannot be deleted", 400);
     }
 
     await WhatsAppCampaign.updateOne(
@@ -3806,9 +3700,8 @@ private async subscribeWabaToApp(
       {
         deletedAt: new Date(),
       },
-    )
+    );
   }
 }
 
-export const whatsappService =
-  WhatsAppService.getInstance()
+export const whatsappService = WhatsAppService.getInstance();

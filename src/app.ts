@@ -27,6 +27,13 @@ export function createApp() {
     express.static(path.resolve(process.cwd(), env.MARKETING_UPLOAD_DIR)),
   )
 
+  app.get('/', (_req, res) => {
+    res.status(200).json({
+      success: true,
+      message: 'Brosavo API is running',
+    })
+  })
+
   app.use('/api/v1', routes)
 
   app.use(notFoundHandler)

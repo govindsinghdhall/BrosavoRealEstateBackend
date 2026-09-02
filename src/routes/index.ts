@@ -53,12 +53,12 @@ router.use('/reports', reportsRoutes)
 // WhatsApp mounts at `/` and later calls `router.use(authenticate)`, which
 // would otherwise 401 every unmatched path including `/public/*`.
 router.use('/public', publicRoutes)
-
+// Marketing routes
+router.use('/marketing', marketingRoutes)
 // WhatsApp routes (includes /webhooks and /whatsapp)
 router.use(whatsappRoutes)
 
-// Marketing routes
-router.use('/marketing', marketingRoutes)
+
 
 console.log('✅ All routes registered successfully')
 

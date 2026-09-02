@@ -1,10 +1,10 @@
 import { env } from './env'
 
 /** Public Render API origin — used when env vars are missing in production. */
-const PRODUCTION_API_ORIGIN = 'https://brisavorealestatebackend-1.onrender.com'
+const PRODUCTION_API_ORIGIN = 'https://api.brosavo.com'
 
 /** Live CRM frontend — used for post-OAuth browser redirects in production. */
-const PRODUCTION_FRONTEND_ORIGIN = 'https://crm.durgaproperty.com'
+const PRODUCTION_FRONTEND_ORIGIN = 'https://crm.brosavo.com'
 
 function stripTrailingSlash(url: string): string {
   return url.replace(/\/$/, '')

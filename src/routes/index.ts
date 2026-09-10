@@ -13,6 +13,7 @@ import bookingsRoutes from './bookings.routes'
 import reportsRoutes from './reports.routes'
 import whatsappRoutes from './whatsapp.routes'
 import marketingRoutes from './marketing.routes'
+import googleBusinessRoutes from './googleBusiness.routes'
 import publicRoutes from './public.routes'
 
 const router = Router()
@@ -55,6 +56,8 @@ router.use('/reports', reportsRoutes)
 router.use('/public', publicRoutes)
 // Marketing routes
 router.use('/marketing', marketingRoutes)
+// Google Business SaaS API (alias routes per product spec)
+router.use('/google-business', googleBusinessRoutes)
 // WhatsApp routes (includes /webhooks and /whatsapp)
 router.use(whatsappRoutes)
 

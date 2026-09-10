@@ -10,6 +10,7 @@ import {
   updateProperty,
 } from '../services/property.service'
 import { listPropertiesWithOwners } from '../services/leadProperty.service'
+import { validatePropertyPayload, buildPropertySlug } from '../services/propertyValidation.service'
 import { buildPaginationMeta, success, successPaginated } from '../utils/response'
 import { AppError } from '../utils/errors'
 
@@ -24,14 +25,50 @@ function paramId(value: string | string[]): number {
   return id
 }
 
-const propertyBodySchema = z.object({
+const projectConfigurationSchema = z.object({
+  bedrooms: z.coerce.number().int().nonnegative(),
+  bathrooms: z.coerce.number().int().positive(),
+  areaMin: z.coerce.number().nonnegative().nullable().optional(),
+  areaMax: z.coerce.number().nonnegative().nullable().optional(),
+  startingPrice: z.coerce.number().nonnegative(),
+  availableUnits: z.coerce.number().int().nonnegative().nullable().optional(),
+})
+
+const offerSchema = z.object({
   title: z.string().min(1),
+  description: z.string().optional(),
+  validFrom: z.string().min(1),
+  validUntil: z.string().min(1),
+})
+
+const propertyBodySchema = z.object({
+  listingType: z.string().optional(),
+  title: z.string().min(1),
+  slug: z.string().nullable().optional(),
   description: z.string().nullable().optional(),
   listingCategory: z.string().optional(),
   type: z.string().min(1),
   status: z.string().optional(),
+  projectStatus: z.string().nullable().optional(),
+  projectName: z.string().nullable().optional(),
+  projectLaunchDate: z.string().nullable().optional(),
+  projectWebsite: z.string().nullable().optional(),
+  projectDescription: z.string().nullable().optional(),
+  projectHighlights: z.array(z.string()).optional(),
+  totalUnits: z.coerce.number().int().nonnegative().nullable().optional(),
+  availableUnits: z.coerce.number().int().nonnegative().nullable().optional(),
+  totalTowers: z.coerce.number().int().nonnegative().nullable().optional(),
+  totalFloors: z.coerce.number().int().nonnegative().nullable().optional(),
+  configurations: z.array(projectConfigurationSchema).optional(),
   price: z.coerce.number().nonnegative(),
-  area: z.coerce.number().nonnegative(),
+  priceType: z.string().optional(),
+  originalPrice: z.coerce.number().nonnegative().nullable().optional(),
+  discountedPrice: z.coerce.number().nonnegative().nullable().optional(),
+  previousPrice: z.coerce.number().nonnegative().nullable().optional(),
+  labels: z.array(z.string()).optional(),
+  offer: offerSchema.nullable().optional(),
+  urgencyReason: z.string().nullable().optional(),
+  area: z.coerce.number().nonnegative().optional(),
   carpetArea: z.coerce.number().nonnegative().nullable().optional(),
   builtUpArea: z.coerce.number().nonnegative().nullable().optional(),
   superArea: z.coerce.number().nonnegative().nullable().optional(),
@@ -69,15 +106,29 @@ const propertyBodySchema = z.object({
 })
 
 function normalizePayload(payload: z.infer<typeof propertyBodySchema>) {
+  const listingType = (payload.listingType ?? 'INDIVIDUAL').toUpperCase()
   return {
     ...payload,
+    listingType,
     listingCategory: payload.listingCategory?.toUpperCase(),
     type: payload.type.toUpperCase(),
     status: payload.status?.toUpperCase() ?? 'AVAILABLE',
+    projectStatus: payload.projectStatus?.toUpperCase() ?? null,
+    priceType: payload.priceType?.toUpperCase() ?? 'FIXED',
     propertyAge: payload.propertyAge?.toUpperCase() ?? null,
     furnishing: payload.furnishing?.toUpperCase() ?? null,
     facing: payload.facing?.toUpperCase() ?? null,
     possessionStatus: payload.possessionStatus?.toUpperCase() ?? null,
+    slug:
+      payload.slug ??
+      buildPropertySlug({
+        listingType,
+        title: payload.title,
+        projectName: payload.projectName,
+        locality: payload.locality ?? '',
+        sector: payload.sector,
+        city: payload.city,
+      }),
   }
 }
 
@@ -106,6 +157,10 @@ export async function listOrganizationProperties(req: Request, res: Response, ne
     const status = typeof req.query.status === 'string' ? req.query.status : undefined
     const type = typeof req.query.type === 'string' ? req.query.type : undefined
     const city = typeof req.query.city === 'string' ? req.query.city : undefined
+    const listingType = typeof req.query.listingType === 'string' ? req.query.listingType : undefined
+    const projectStatus =
+      typeof req.query.projectStatus === 'string' ? req.query.projectStatus : undefined
+    const labels = typeof req.query.labels === 'string' ? req.query.labels : undefined
     const sortBy = typeof req.query.sortBy === 'string' ? req.query.sortBy : undefined
     const sortOrder = req.query.sortOrder === 'asc' ? 'asc' : 'desc'
 
@@ -116,6 +171,9 @@ export async function listOrganizationProperties(req: Request, res: Response, ne
       status,
       type,
       city,
+      listingType,
+      projectStatus,
+      labels,
       sortBy,
       sortOrder,
     })
@@ -146,7 +204,8 @@ export async function createOrganizationProperty(req: Request, res: Response, ne
       return res.status(401).json({ success: false, message: 'Unauthorized' })
     }
 
-    const payload = normalizePayload(propertyBodySchema.parse(req.body))
+    const parsed = normalizePayload(propertyBodySchema.parse(req.body))
+    const payload = validatePropertyPayload(parsed as Record<string, unknown>)
     const property = await createProperty(req.auth.organizationId, payload)
     return success(res, serializeProperty(property), 'Property created', 201)
   } catch (error) {
@@ -165,15 +224,20 @@ export async function updateOrganizationProperty(req: Request, res: Response, ne
     if (parsed.listingCategory) payload.listingCategory = parsed.listingCategory.toUpperCase()
     if (parsed.type) payload.type = parsed.type.toUpperCase()
     if (parsed.status) payload.status = parsed.status.toUpperCase()
+    if (parsed.listingType) payload.listingType = parsed.listingType.toUpperCase()
+    if (parsed.projectStatus) payload.projectStatus = parsed.projectStatus.toUpperCase()
+    if (parsed.priceType) payload.priceType = parsed.priceType.toUpperCase()
     if (parsed.propertyAge) payload.propertyAge = parsed.propertyAge.toUpperCase()
     if (parsed.furnishing) payload.furnishing = parsed.furnishing.toUpperCase()
     if (parsed.facing) payload.facing = parsed.facing.toUpperCase()
     if (parsed.possessionStatus) payload.possessionStatus = parsed.possessionStatus.toUpperCase()
 
+    const validated = validatePropertyPayload(payload, true)
+
     const property = await updateProperty(
       paramId(req.params.id),
       req.auth.organizationId,
-      payload,
+      validated,
     )
     return success(res, serializeProperty(property), 'Property updated')
   } catch (error) {

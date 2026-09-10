@@ -24,6 +24,18 @@ router.get(
 )
 
 router.get('/google/login', requirePermission(PERMISSIONS.MARKETING_MANAGE), marketingController.googleLogin)
+router.get('/google/status', requirePermission(PERMISSIONS.MARKETING_READ), marketingController.getGoogleStatus)
+router.get('/google/locations', requirePermission(PERMISSIONS.MARKETING_READ), marketingController.listLocations)
+router.post(
+  '/google/locations/sync',
+  requirePermission(PERMISSIONS.MARKETING_MANAGE),
+  marketingController.syncLocations,
+)
+router.post(
+  '/google/locations/select',
+  requirePermission(PERMISSIONS.MARKETING_MANAGE),
+  marketingController.selectLocations,
+)
 router.post(
   '/google/disconnect',
   requirePermission(PERMISSIONS.MARKETING_MANAGE),
@@ -82,6 +94,34 @@ router.post(
   '/content/:id/schedule',
   requirePermission(PERMISSIONS.MARKETING_MANAGE),
   marketingController.scheduleContent,
+)
+router.post(
+  '/content/:id/cancel',
+  requirePermission(PERMISSIONS.MARKETING_MANAGE),
+  marketingController.cancelContent,
+)
+router.post(
+  '/content/:id/duplicate',
+  requirePermission(PERMISSIONS.MARKETING_MANAGE),
+  marketingController.duplicateContent,
+)
+router.post(
+  '/content/generate-ai',
+  requirePermission(PERMISSIONS.MARKETING_MANAGE),
+  marketingController.generatePostAi,
+)
+
+router.get('/automation', requirePermission(PERMISSIONS.MARKETING_READ), marketingController.getAutomation)
+router.put(
+  '/automation',
+  requirePermission(PERMISSIONS.MARKETING_MANAGE),
+  marketingController.updateAutomation,
+)
+router.get('/usage', requirePermission(PERMISSIONS.MARKETING_READ), marketingController.getUsage)
+router.get(
+  '/activity-logs',
+  requirePermission(PERMISSIONS.MARKETING_READ),
+  marketingController.listActivityLogs,
 )
 
 router.get('/campaigns', requirePermission(PERMISSIONS.MARKETING_READ), marketingController.listCampaigns)

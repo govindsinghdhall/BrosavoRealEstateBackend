@@ -5,9 +5,18 @@ import { GoogleBusinessClient } from '../../integrations/googleBusiness.client'
 import { MarketingRepository } from '../../repositories/marketing.repository'
 import { logMarketingActivity } from './activityLog.service'
 import { Organization } from '../../models/Organization'
+import { GoogleTokenService } from './googleToken.service'
+import { LocationService } from './location.service'
+import { EntitlementService } from './entitlement.service'
+import { GOOGLE_BUSINESS_FEATURES } from '../../constants/googleBusinessFeatures'
 
 export class GoogleOAuthService {
   static async getLoginUrl(organizationId: number, userId: number) {
+    await EntitlementService.assertFeature(
+      organizationId,
+      GOOGLE_BUSINESS_FEATURES.GOOGLE_BUSINESS,
+    )
+
     const state = signAccessToken({
       userId,
       organizationId,
@@ -29,25 +38,40 @@ export class GoogleOAuthService {
       throw new AppError('Invalid OAuth state', 400)
     }
 
+    await EntitlementService.assertFeature(
+      organizationId,
+      GOOGLE_BUSINESS_FEATURES.GOOGLE_BUSINESS,
+    )
+
     const tokens = await GoogleBusinessClient.exchangeCode(code)
     const org = await Organization.findById(organizationId).lean()
+    const userInfo = await GoogleBusinessClient.getUserInfo(tokens.access_token)
     const expiry = new Date(Date.now() + tokens.expires_in * 1000)
 
     const account = await MarketingRepository.upsertProvider(organizationId, 'google', {
-      accountName: org?.name || 'Google Business',
+      accountName: userInfo.name || org?.name || 'Google Business',
       accountId: null,
       locationId: null,
-      accessToken: tokens.access_token,
-      refreshToken: tokens.refresh_token ?? null,
+      accessToken: GoogleTokenService.encrypt(tokens.access_token),
+      refreshToken: GoogleTokenService.encrypt(tokens.refresh_token ?? null),
       tokenExpiry: expiry,
       isConnected: true,
       metadata: {
         scope: tokens.scope,
         connectedAt: new Date().toISOString(),
+        status: 'connected',
+        googleEmail: userInfo.email,
+        googleName: userInfo.name,
       },
       updatedBy: userId,
       createdBy: userId,
     })
+
+    try {
+      await LocationService.discoverAndSyncLocations(organizationId, userId)
+    } catch (error) {
+      console.error(`Location discovery failed for org ${organizationId}:`, error)
+    }
 
     await logMarketingActivity({
       organizationId,
@@ -66,19 +90,22 @@ export class GoogleOAuthService {
         accountName: account.accountName,
         isConnected: account.isConnected,
         locationId: account.locationId,
+        status: 'connected',
       },
       redirectUrl: `${getFrontendOrigin()}/marketing?google=connected`,
     }
   }
 
   static async disconnect(organizationId: number, userId: number, meta?: { ip?: string; userAgent?: string }) {
-    const account = await MarketingRepository.upsertProvider(organizationId, 'google', {
-      isConnected: false,
-      accessToken: null,
-      refreshToken: null,
-      tokenExpiry: null,
-      updatedBy: userId,
-    })
+    await GoogleTokenService.revokeAndClear(organizationId, userId)
+
+    const { GoogleBusinessLocation } = await import('../../models/GoogleBusinessLocation')
+    await GoogleBusinessLocation.updateMany(
+      { organizationId },
+      { $set: { selected: false, status: 'inactive' } },
+    )
+
+    const account = await MarketingRepository.findProvider(organizationId, 'google')
 
     await logMarketingActivity({
       organizationId,
@@ -93,6 +120,21 @@ export class GoogleOAuthService {
     return account
   }
 
+  static async getStatus(organizationId: number) {
+    const account = await MarketingRepository.findProvider(organizationId, 'google')
+    const locations = await LocationService.listLocations(organizationId)
+
+    return {
+      isConnected: Boolean(account?.isConnected),
+      accountName: account?.accountName || null,
+      accountId: account?.accountId || null,
+      status: (account?.metadata as Record<string, unknown>)?.status || 'disconnected',
+      lastSyncAt: (account?.metadata as Record<string, unknown>)?.lastLocationSyncAt || null,
+      locationsCount: locations.length,
+      selectedLocationsCount: locations.filter((l) => l.selected).length,
+    }
+  }
+
   static async refreshExpiringTokens() {
     const soon = new Date(Date.now() + 60 * 60 * 1000)
     const { MarketingProviderAccount } = await import('../../models/MarketingProviderAccount')
@@ -103,12 +145,8 @@ export class GoogleOAuthService {
     }).select('+accessToken +refreshToken')
 
     for (const account of accounts) {
-      if (!account.refreshToken) continue
       try {
-        const tokens = await GoogleBusinessClient.refreshAccessToken(account.refreshToken)
-        account.accessToken = tokens.access_token
-        account.tokenExpiry = new Date(Date.now() + tokens.expires_in * 1000)
-        await account.save()
+        await GoogleTokenService.getValidAccessToken(account.organizationId)
       } catch (error) {
         console.error(`Failed to refresh Google token for org ${account.organizationId}`, error)
       }

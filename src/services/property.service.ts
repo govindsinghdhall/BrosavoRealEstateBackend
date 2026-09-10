@@ -1,20 +1,59 @@
 import type { IProperty } from '../models/Property'
 import { Property } from '../models/Property'
 import { NotFoundError } from '../utils/errors'
+import {
+  buildConfigurationSummary,
+  computeDiscountPercent,
+  computeReductionPercent,
+  getActiveLabels,
+  isOfferActive,
+} from './propertyValidation.service'
 
 function activeFilter(organizationId: number) {
   return { organizationId, deletedAt: null }
 }
 
 export function serializeProperty(property: IProperty) {
+  const discountPercent =
+    property.originalPrice && property.discountedPrice
+      ? computeDiscountPercent(property.originalPrice, property.discountedPrice)
+      : null
+  const reductionPercent =
+    property.previousPrice && property.price
+      ? computeReductionPercent(property.previousPrice, property.price)
+      : null
+
   return {
     id: property._id,
+    listingType: property.listingType ?? 'INDIVIDUAL',
     title: property.title,
+    slug: property.slug,
     description: property.description,
     listingCategory: property.listingCategory,
     type: property.type,
     status: property.status,
+    projectStatus: property.projectStatus,
+    projectName: property.projectName,
+    projectLaunchDate: property.projectLaunchDate,
+    projectWebsite: property.projectWebsite,
+    projectDescription: property.projectDescription,
+    projectHighlights: property.projectHighlights ?? [],
+    totalUnits: property.totalUnits,
+    availableUnits: property.availableUnits,
+    totalTowers: property.totalTowers,
+    totalFloors: property.totalFloors,
+    configurations: property.configurations ?? [],
+    configurationSummary: buildConfigurationSummary(property.configurations ?? []),
     price: property.price,
+    priceType: property.priceType ?? 'FIXED',
+    originalPrice: property.originalPrice,
+    discountedPrice: property.discountedPrice,
+    previousPrice: property.previousPrice,
+    discountPercent,
+    reductionPercent,
+    labels: property.labels ?? [],
+    offer: property.offer,
+    urgencyReason: property.urgencyReason,
     area: property.area,
     carpetArea: property.carpetArea,
     builtUpArea: property.builtUpArea,
@@ -57,7 +96,7 @@ export function serializeProperty(property: IProperty) {
 
 async function groupInventory(
   organizationId: number,
-  field: 'status' | 'type' | 'city',
+  field: 'status' | 'type' | 'city' | 'listingType' | 'projectStatus',
 ): Promise<{ [key: string]: string | number; _count: number }[]> {
   const key = field
   return Property.aggregate([
@@ -69,13 +108,15 @@ async function groupInventory(
 }
 
 export async function getInventory(organizationId: number) {
-  const [byStatus, byType, byCity] = await Promise.all([
+  const [byStatus, byType, byCity, byListingType, byProjectStatus] = await Promise.all([
     groupInventory(organizationId, 'status'),
     groupInventory(organizationId, 'type'),
     groupInventory(organizationId, 'city'),
+    groupInventory(organizationId, 'listingType'),
+    groupInventory(organizationId, 'projectStatus'),
   ])
 
-  return { byStatus, byType, byCity }
+  return { byStatus, byType, byCity, byListingType, byProjectStatus }
 }
 
 export async function listProperties(
@@ -87,6 +128,9 @@ export async function listProperties(
     status?: string
     type?: string
     city?: string
+    listingType?: string
+    projectStatus?: string
+    labels?: string
     sortBy?: string
     sortOrder?: 'asc' | 'desc'
   },
@@ -96,10 +140,26 @@ export async function listProperties(
   if (options.status) filter.status = options.status.toUpperCase()
   if (options.type) filter.type = options.type.toUpperCase()
   if (options.city) filter.city = new RegExp(options.city, 'i')
+  if (options.listingType) filter.listingType = options.listingType.toUpperCase()
+  if (options.projectStatus) filter.projectStatus = options.projectStatus.toUpperCase()
+
+  if (options.labels) {
+    const labelList = options.labels.split(',').map((l) => l.trim().toUpperCase()).filter(Boolean)
+    if (labelList.length) filter.labels = { $in: labelList }
+  }
 
   if (options.search) {
     const pattern = new RegExp(options.search, 'i')
-    filter.$or = [{ title: pattern }, { city: pattern }, { locality: pattern }, { address: pattern }]
+    filter.$or = [
+      { title: pattern },
+      { projectName: pattern },
+      { city: pattern },
+      { locality: pattern },
+      { sector: pattern },
+      { address: pattern },
+      { builderName: pattern },
+      { pincode: pattern },
+    ]
   }
 
   const sortField = options.sortBy || 'createdAt'

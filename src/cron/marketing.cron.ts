@@ -5,7 +5,6 @@ import { GoogleOAuthService } from '../services/marketing/googleOAuth.service'
 import { MarketingActivityLog } from '../models/MarketingActivityLog'
 
 export function startMarketingCronJobs() {
-  // Sync Google reviews every 30 minutes
   cron.schedule('*/30 * * * *', async () => {
     try {
       const results = await ReviewSyncService.syncAllConnectedOrgs()
@@ -17,19 +16,19 @@ export function startMarketingCronJobs() {
     }
   })
 
-  // Publish scheduled content every 15 minutes
   cron.schedule('*/15 * * * *', async () => {
     try {
       const result = await ContentService.publishDueContent()
-      if (result.published > 0) {
-        console.log(`[cron] Published ${result.published}/${result.scanned} scheduled content items`)
+      if (result.published > 0 || result.failed > 0) {
+        console.log(
+          `[cron] Published ${result.published}, failed ${result.failed}/${result.scanned} scheduled posts`,
+        )
       }
     } catch (error) {
       console.error('[cron] Content scheduler failed', error)
     }
   })
 
-  // Refresh expiring Google tokens every 12 hours
   cron.schedule('0 */12 * * *', async () => {
     try {
       await GoogleOAuthService.refreshExpiringTokens()
@@ -39,7 +38,6 @@ export function startMarketingCronJobs() {
     }
   })
 
-  // Cleanup activity logs older than 90 days — weekly
   cron.schedule('0 3 * * 0', async () => {
     try {
       const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000)

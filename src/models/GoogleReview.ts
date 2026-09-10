@@ -7,6 +7,7 @@ export type ReviewStatus = (typeof REVIEW_STATUSES)[number]
 export interface IGoogleReview extends Document<number> {
   organizationId: number
   providerAccountId: number
+  locationId?: number | null
   googleReviewId: string
   reviewerName: string
   reviewerAvatar?: string | null
@@ -26,8 +27,9 @@ export interface IGoogleReview extends Document<number> {
 const schema = new Schema<IGoogleReview>(
   {
     _id: { type: Number },
-    organizationId: { type: Number, ref: 'Organization', required: true, index: true },
-    providerAccountId: { type: Number, ref: 'MarketingProviderAccount', required: true, index: true },
+    organizationId: { type: Number, ref: 'Organization', required: true },
+    providerAccountId: { type: Number, ref: 'MarketingProviderAccount', required: true },
+    locationId: { type: Number, ref: 'GoogleBusinessLocation', default: null },
     googleReviewId: { type: String, required: true, trim: true },
     reviewerName: { type: String, required: true, trim: true },
     reviewerAvatar: { type: String, default: null },

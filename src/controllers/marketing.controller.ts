@@ -5,6 +5,11 @@ import { AIReplyService, ReviewSyncService } from '../services/marketing/review.
 import { ContentService } from '../services/marketing/content.service'
 import { CampaignService } from '../services/marketing/campaign.service'
 import { AnalyticsService, SettingsService } from '../services/marketing/analytics.service'
+import { LocationService } from '../services/marketing/location.service'
+import { AutomationService } from '../services/marketing/automation.service'
+import { UsageService } from '../services/marketing/usage.service'
+import { GoogleAiService } from '../services/marketing/ai.service'
+import { MarketingActivityLog } from '../models/MarketingActivityLog'
 import { success, successPaginated, buildPaginationMeta } from '../utils/response'
 import { AppError, UnauthorizedError } from '../utils/errors'
 import { parseId, parsePagination } from '../utils/pagination'
@@ -194,6 +199,10 @@ export async function updateContent(req: Request, res: Response, next: NextFunct
         description: z.string().nullable().optional(),
         contentType: z.enum(CONTENT_TYPES).optional(),
         status: z.enum(CONTENT_STATUSES).optional(),
+        locationIds: z.array(z.coerce.number()).optional(),
+        timezone: z.string().optional(),
+        cta: z.string().nullable().optional(),
+        targetUrl: z.string().url().nullable().optional(),
       })
       .parse(req.body)
     const content = await ContentService.update(
@@ -384,6 +393,13 @@ export async function updateSettings(req: Request, res: Response, next: NextFunc
         autoFetchInterval: z.number().int().min(5).max(1440).optional(),
         defaultAiTone: z.enum(AI_TONES).optional(),
         theme: z.enum(['system', 'light', 'dark']).optional(),
+        autoReplyEnabled: z.boolean().optional(),
+        aiLanguage: z.string().optional(),
+        aiInstructions: z.string().optional(),
+        brandVoice: z.string().optional(),
+        defaultTimezone: z.string().optional(),
+        defaultCta: z.string().optional(),
+        defaultPostBehavior: z.enum(['draft', 'publish', 'schedule']).optional(),
       })
       .parse(req.body)
     const settings = await SettingsService.update(auth.organizationId, body)
@@ -418,6 +434,179 @@ export async function getPostAnalytics(req: Request, res: Response, next: NextFu
     const auth = requireAuth(req)
     const data = await AnalyticsService.getPostAnalytics(auth.organizationId)
     return success(res, data)
+  } catch (error) {
+    next(error)
+  }
+}
+
+export async function getGoogleStatus(req: Request, res: Response, next: NextFunction) {
+  try {
+    const auth = requireAuth(req)
+    const status = await GoogleOAuthService.getStatus(auth.organizationId)
+    return success(res, status)
+  } catch (error) {
+    next(error)
+  }
+}
+
+export async function listLocations(req: Request, res: Response, next: NextFunction) {
+  try {
+    const auth = requireAuth(req)
+    const selectedOnly = req.query.selected === 'true'
+    const locations = await LocationService.listLocations(auth.organizationId, selectedOnly)
+    return success(res, locations)
+  } catch (error) {
+    next(error)
+  }
+}
+
+export async function syncLocations(req: Request, res: Response, next: NextFunction) {
+  try {
+    const auth = requireAuth(req)
+    const locations = await LocationService.discoverAndSyncLocations(
+      auth.organizationId,
+      auth.userId,
+    )
+    return success(res, locations, 'Locations synced')
+  } catch (error) {
+    next(error)
+  }
+}
+
+export async function selectLocations(req: Request, res: Response, next: NextFunction) {
+  try {
+    const auth = requireAuth(req)
+    const body = z.object({ locationIds: z.array(z.coerce.number()).min(1) }).parse(req.body)
+    const locations = await LocationService.selectLocations(
+      auth.organizationId,
+      body.locationIds,
+      auth.userId,
+    )
+    return success(res, locations, 'Locations selected')
+  } catch (error) {
+    next(error)
+  }
+}
+
+export async function cancelContent(req: Request, res: Response, next: NextFunction) {
+  try {
+    const auth = requireAuth(req)
+    const content = await ContentService.cancel(
+      auth.organizationId,
+      parseId(req.params.id),
+      auth.userId,
+    )
+    return success(res, content, 'Content cancelled')
+  } catch (error) {
+    next(error)
+  }
+}
+
+export async function duplicateContent(req: Request, res: Response, next: NextFunction) {
+  try {
+    const auth = requireAuth(req)
+    const content = await ContentService.duplicate(
+      auth.organizationId,
+      parseId(req.params.id),
+      auth.userId,
+    )
+    return success(res, content, 'Content duplicated', 201)
+  } catch (error) {
+    next(error)
+  }
+}
+
+export async function generatePostAi(req: Request, res: Response, next: NextFunction) {
+  try {
+    const auth = requireAuth(req)
+    const body = z.object({ prompt: z.string().min(1) }).parse(req.body)
+    const content = await GoogleAiService.generatePostContent(
+      auth.organizationId,
+      body.prompt,
+    )
+    return success(res, { content })
+  } catch (error) {
+    next(error)
+  }
+}
+
+export async function getAutomation(req: Request, res: Response, next: NextFunction) {
+  try {
+    const auth = requireAuth(req)
+    const settings = await SettingsService.get(auth.organizationId)
+    const rules = await AutomationService.getRules(auth.organizationId)
+    return success(res, { settings, rules })
+  } catch (error) {
+    next(error)
+  }
+}
+
+export async function updateAutomation(req: Request, res: Response, next: NextFunction) {
+  try {
+    const auth = requireAuth(req)
+    const body = z
+      .object({
+        autoReplyEnabled: z.boolean().optional(),
+        ratingRules: z.record(z.string()).optional(),
+        rules: z
+          .array(
+            z.object({
+              id: z.coerce.number().optional(),
+              name: z.string(),
+              enabled: z.boolean(),
+              minRating: z.number().min(1).max(5).optional(),
+              maxRating: z.number().min(1).max(5).optional(),
+              keywords: z.array(z.string()).optional(),
+              action: z.enum(['auto_publish', 'require_approval', 'notify_admin', 'human_review']),
+              locationId: z.coerce.number().nullable().optional(),
+              priority: z.number().optional(),
+            }),
+          )
+          .optional(),
+      })
+      .parse(req.body)
+
+    const result = await AutomationService.upsertSettings(
+      auth.organizationId,
+      auth.userId,
+      {
+        ...body,
+        ratingRules: body.ratingRules as Record<
+          string,
+          import('../models/GoogleBusinessAutomationRule').AutomationAction
+        > | undefined,
+      },
+    )
+    return success(res, result, 'Automation settings updated')
+  } catch (error) {
+    next(error)
+  }
+}
+
+export async function getUsage(req: Request, res: Response, next: NextFunction) {
+  try {
+    const auth = requireAuth(req)
+    const usage = await UsageService.getUsageSummary(auth.organizationId)
+    return success(res, usage)
+  } catch (error) {
+    next(error)
+  }
+}
+
+export async function listActivityLogs(req: Request, res: Response, next: NextFunction) {
+  try {
+    const auth = requireAuth(req)
+    const { page, limit } = parsePagination(req)
+    const skip = (page - 1) * limit
+    const [rows, total] = await Promise.all([
+      MarketingActivityLog.find({ organizationId: auth.organizationId })
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      MarketingActivityLog.countDocuments({ organizationId: auth.organizationId }),
+    ])
+    return successPaginated(res, rows, buildPaginationMeta(page, limit, total))
   } catch (error) {
     next(error)
   }

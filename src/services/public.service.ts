@@ -5,6 +5,13 @@ import { User } from '../models/User'
 import { Role } from '../models/Role'
 import { NotFoundError } from '../utils/errors'
 import { createLead } from './lead.service'
+import {
+  buildConfigurationSummary,
+  computeDiscountPercent,
+  computeReductionPercent,
+  getActiveLabels,
+  isOfferActive,
+} from './propertyValidation.service'
 
 function publicPropertyFilter(organizationId: number) {
   return {
@@ -41,7 +48,10 @@ function applyCategoryFilter(filter: Record<string, unknown>, category?: string)
       filter.price = { $gte: 5_000_000 }
       break
     case 'new_projects':
-      filter.possessionStatus = 'UNDER_CONSTRUCTION'
+      filter.$or = [
+        { listingType: 'PROJECT' },
+        { possessionStatus: 'UNDER_CONSTRUCTION' },
+      ]
       break
     default:
       filter.listingCategory = category.toUpperCase()
@@ -101,16 +111,68 @@ function applyListFilter(
 export function serializePublicProperty(property: IProperty) {
   const area = property.area
   const superArea = property.superArea ?? area
-  const price = property.price
+  const listingType = property.listingType ?? 'INDIVIDUAL'
+  const isProject = listingType === 'PROJECT'
+  const displayPrice =
+    property.labels?.includes('DISCOUNTED') && property.discountedPrice
+      ? property.discountedPrice
+      : property.price
+  const price = displayPrice
+  const activeLabels = getActiveLabels(property.labels ?? [], property.offer)
+  const activeOffer =
+    property.offer && isOfferActive(property.offer) ? property.offer : null
+
+  const discountPercent =
+    property.originalPrice && property.discountedPrice
+      ? computeDiscountPercent(property.originalPrice, property.discountedPrice)
+      : null
+  const reductionPercent =
+    property.previousPrice && property.price
+      ? computeReductionPercent(property.previousPrice, property.price)
+      : null
+
+  const configurationSummary = isProject
+    ? buildConfigurationSummary(property.configurations ?? [])
+    : null
 
   return {
     id: String(property._id),
+    listingType: listingType.toLowerCase(),
+    slug: property.slug,
     title: property.title,
-    description: property.description,
+    description: isProject ? property.projectDescription ?? property.description : property.description,
     listingCategory: (property.listingCategory || 'BUY').toLowerCase(),
     type: property.type.toLowerCase(),
     status: property.status.toLowerCase(),
+    projectStatus: property.projectStatus?.toLowerCase() ?? null,
+    projectName: property.projectName,
+    projectLaunchDate: property.projectLaunchDate,
+    projectWebsite: property.projectWebsite,
+    projectHighlights: property.projectHighlights ?? [],
+    totalUnits: property.totalUnits,
+    availableUnits: property.availableUnits,
+    totalTowers: property.totalTowers,
+    totalFloors: property.totalFloors,
+    configurations: (property.configurations ?? []).map((c) => ({
+      bedrooms: c.bedrooms,
+      bathrooms: c.bathrooms,
+      areaMin: c.areaMin,
+      areaMax: c.areaMax,
+      startingPrice: c.startingPrice,
+      availableUnits: c.availableUnits,
+    })),
+    configurationSummary,
     price,
+    startingPrice: isProject ? property.price : null,
+    priceType: (property.priceType ?? 'FIXED').toLowerCase(),
+    originalPrice: property.originalPrice,
+    discountedPrice: property.discountedPrice,
+    previousPrice: property.previousPrice,
+    discountPercent,
+    reductionPercent,
+    labels: activeLabels.map((l) => l.toLowerCase()),
+    featured: activeLabels.includes('FEATURED'),
+    offer: activeOffer,
     pricePerSqFt: superArea > 0 ? Math.round(price / superArea) : 0,
     area,
     carpetArea: property.carpetArea,
@@ -144,6 +206,7 @@ export function serializePublicProperty(property: IProperty) {
     brochureUrl: property.brochureUrl,
     amenities: property.amenities ?? [],
     images: [],
+    luxury: property.price >= 5_000_000,
   }
 }
 
@@ -174,6 +237,9 @@ export async function listPublicProperties(
   status?: string
   builder?: string
   featured?: boolean
+  listingType?: string
+  projectStatus?: string
+  labels?: string
   reraOnly?: boolean
   readyToMove?: boolean
   underConstruction?: boolean
@@ -200,6 +266,7 @@ export async function listPublicProperties(
           { builderName: pattern },
           { landmark: pattern },
           { pincode: pattern },
+          { projectName: pattern },
         ],
       },
     ]
@@ -211,6 +278,13 @@ export async function listPublicProperties(
   if (options.pincode) filter.pincode = new RegExp(options.pincode, 'i')
   if (options.landmark) filter.landmark = new RegExp(options.landmark, 'i')
   if (options.builder) filter.builderName = new RegExp(options.builder, 'i')
+  if (options.listingType) filter.listingType = options.listingType.toUpperCase()
+  if (options.projectStatus) filter.projectStatus = options.projectStatus.toUpperCase()
+
+  if (options.labels) {
+    const labelList = options.labels.split(',').map((l) => l.trim().toUpperCase()).filter(Boolean)
+    if (labelList.length) filter.labels = { $in: labelList }
+  }
 
   if (options.minPrice || options.maxPrice) {
     const price: Record<string, number> = {}
@@ -242,7 +316,7 @@ export async function listPublicProperties(
     filter.possessionDate = new RegExp(options.possessionYear, 'i')
   }
   if (options.featured) {
-    filter.isVerified = true
+    filter.labels = { $in: ['FEATURED'] }
   }
 
   const sortField = options.sortBy || 'createdAt'

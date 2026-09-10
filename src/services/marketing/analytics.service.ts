@@ -19,8 +19,9 @@ export class SettingsService {
 
 export class AnalyticsService {
   static async getDashboard(organizationId: number): Promise<Record<string, unknown>> {
+    const { WhatsAppAccount } = await import('../../models/WhatsAppAccount')
+
     const [
-      connectedPlatforms,
       reviewCount,
       pendingReplies,
       avgResult,
@@ -31,8 +32,8 @@ export class AnalyticsService {
       providers,
       settings,
       organization,
+      whatsappAccount,
     ] = await Promise.all([
-      MarketingRepository.countConnected(organizationId),
       GoogleReviewRepository.count(organizationId),
       GoogleReviewRepository.count(organizationId, { status: 'pending' }),
       GoogleReviewRepository.averageRating(organizationId),
@@ -43,6 +44,13 @@ export class AnalyticsService {
       MarketingRepository.listProviders(organizationId),
       SettingsRepository.getOrCreate(organizationId),
       getOrganizationById(organizationId),
+      WhatsAppAccount.findOne({
+        organizationId,
+        isConnected: true,
+        deletedAt: null,
+      })
+        .select('_id')
+        .lean(),
     ])
 
     const averageRating = avgResult[0]?.avg ? Number(avgResult[0].avg.toFixed(1)) : 0
@@ -55,11 +63,16 @@ export class AnalyticsService {
           metadata?: { verified?: boolean; mapsUrl?: string }
         }
       | undefined
-    const whatsappConfigured = Boolean(organization.settings?.whatsapp?.businessPhone)
+
+    const googleConnected = Boolean(google?.isConnected)
+    const whatsappConnected = Boolean(whatsappAccount)
+    const connectedPlatforms = [googleConnected, whatsappConnected].filter(Boolean).length
+    const whatsappConfigured =
+      whatsappConnected || Boolean(organization.settings?.whatsapp?.businessPhone)
 
     let marketingScore = 20
-    if (google?.isConnected) marketingScore += 25
-    if (whatsappConfigured) marketingScore += 15
+    if (googleConnected) marketingScore += 25
+    if (whatsappConnected) marketingScore += 15
     if (reviewCount > 0) marketingScore += 15
     if (pendingReplies === 0 && reviewCount > 0) marketingScore += 10
     if (averageRating >= 4.5) marketingScore += 10
@@ -85,7 +98,7 @@ export class AnalyticsService {
         marketingScore,
       },
       googleBusiness: {
-        connected: Boolean(google?.isConnected),
+        connected: googleConnected,
         name: google?.accountName || organization.name,
         address: organization.address || '',
         logoUrl: organization.logo || '',
@@ -111,7 +124,7 @@ export class AnalyticsService {
         drafts: draftContent.length,
       },
       settings: {
-        googleConnected: Boolean(google?.isConnected),
+        googleConnected: googleConnected,
         enableAiReplies: settings.enableAiReply,
         reviewApprovalRequired: settings.reviewApprovalRequired,
         emailNotifications: settings.emailNotification,

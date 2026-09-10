@@ -21,6 +21,9 @@ const envSchema = z.object({
   API_BASE_URL: z.string().optional(),
   FRONTEND_URL: z.string().default('http://localhost:5173'),
   MARKETING_UPLOAD_DIR: z.string().default('uploads/marketing'),
+  ENCRYPTION_KEY: z.string().optional(),
+  GOOGLE_BUSINESS_FEATURE_FLAG: z.enum(['true', 'false']).optional(),
+  OPENAI_API_KEY: z.string().optional(),
 })
 
 const parsed = envSchema.safeParse(process.env)

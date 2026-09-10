@@ -9,44 +9,96 @@ import {
 import { AppError, NotFoundError } from '../../utils/errors'
 import { logMarketingActivity } from './activityLog.service'
 import type { ReviewStatus } from '../../models/GoogleReview'
+import { GoogleTokenService } from './googleToken.service'
+import { LocationService } from './location.service'
+import { GoogleAiService } from './ai.service'
+import { AutomationService } from './automation.service'
+import { EntitlementService } from './entitlement.service'
+import { GOOGLE_BUSINESS_FEATURES } from '../../constants/googleBusinessFeatures'
+import { UsageService } from './usage.service'
 
 export class ReviewSyncService {
   static async syncLatestReviews(organizationId: number) {
-    const account = await MarketingRepository.findProviderWithTokens(organizationId, 'google')
-    if (!account?.isConnected || !account.accessToken) {
+    await EntitlementService.assertFeature(
+      organizationId,
+      GOOGLE_BUSINESS_FEATURES.REVIEWS,
+    )
+
+    const account = await MarketingRepository.findProvider(organizationId, 'google')
+    if (!account?.isConnected) {
       throw new AppError('Google Business is not connected', 400)
     }
 
-    const remote = await GoogleBusinessClient.fetchReviews(
-      account.accessToken,
-      account.locationId || '',
-    )
+    const { accessToken } = await GoogleTokenService.getValidAccessToken(organizationId)
+    const locations = await LocationService.getSelectedLocations(organizationId)
 
-    let upserted = 0
-    for (const review of remote) {
-      await GoogleReviewRepository.upsertByGoogleId(organizationId, review.googleReviewId, {
-        providerAccountId: account._id,
-        reviewerName: review.reviewerName,
-        reviewerAvatar: review.reviewerAvatar ?? null,
-        rating: review.rating,
-        reviewText: review.reviewText,
-        reviewDate: review.reviewDate,
-        hasReply: Boolean(review.replyText),
-        replyText: review.replyText ?? null,
-        replyDate: review.replyDate ?? null,
-        status: review.replyText ? 'posted' : 'pending',
-      })
-      upserted += 1
+    if (!locations.length) {
+      throw new AppError('No Google Business locations selected. Select at least one location.', 400)
     }
 
-    return { upserted, totalRemote: remote.length }
+    let upserted = 0
+    let totalRemote = 0
+
+    for (const location of locations) {
+      const remote = await GoogleBusinessClient.fetchReviews(
+        accessToken,
+        location.googleAccountId,
+        location.googleLocationId,
+      )
+      totalRemote += remote.length
+
+      for (const review of remote) {
+        const saved = await GoogleReviewRepository.upsertByGoogleId(
+          organizationId,
+          review.googleReviewId,
+          {
+            providerAccountId: account._id,
+            locationId: location._id,
+            reviewerName: review.reviewerName,
+            reviewerAvatar: review.reviewerAvatar ?? null,
+            rating: review.rating,
+            reviewText: review.reviewText,
+            reviewDate: review.reviewDate,
+            hasReply: Boolean(review.replyText),
+            replyText: review.replyText ?? null,
+            replyDate: review.replyDate ?? null,
+            status: review.replyText ? 'posted' : 'pending',
+          },
+        )
+        upserted += 1
+
+        if (!review.replyText && saved.status === 'pending') {
+          try {
+            await AutomationService.processNewReview(organizationId, saved._id)
+          } catch (error) {
+            console.error(`Automation failed for review ${saved._id}:`, error)
+          }
+        }
+      }
+    }
+
+    return { upserted, totalRemote }
   }
 
   static async syncAllConnectedOrgs() {
     const { MarketingProviderAccount } = await import('../../models/MarketingProviderAccount')
-    const accounts = await MarketingProviderAccount.find({ provider: 'google', isConnected: true }).lean()
+    const { MarketingSettings } = await import('../../models/MarketingSettings')
+
+    const accounts = await MarketingProviderAccount.find({
+      provider: 'google',
+      isConnected: true,
+    }).lean()
+
     const results = []
     for (const account of accounts) {
+      const settings = await MarketingSettings.findOne({
+        organizationId: account.organizationId,
+      }).lean()
+
+      if (settings && settings.autoSyncReviews === false) {
+        continue
+      }
+
       try {
         const result = await this.syncLatestReviews(account.organizationId)
         results.push({ organizationId: account.organizationId, ...result })
@@ -70,11 +122,13 @@ export class ReviewSyncService {
       search?: string
       from?: Date
       to?: Date
+      locationId?: number
     },
   ): Promise<{ rows: Array<Record<string, unknown>>; total: number }> {
     const filter: Record<string, unknown> = {}
     if (query.rating) filter.rating = query.rating
     if (query.status) filter.status = query.status
+    if (query.locationId) filter.locationId = query.locationId
     if (query.from || query.to) {
       filter.reviewDate = {
         ...(query.from ? { $gte: query.from } : {}),
@@ -110,18 +164,21 @@ export class AIReplyService {
     const review = await ReviewSyncService.getReview(organizationId, reviewId)
     const settings = await SettingsRepository.getOrCreate(organizationId)
 
-    const tone = settings.defaultAiTone
-    const firstName = review.reviewerName.split(' ')[0] || 'there'
-    const generatedReply =
-      `Hi ${firstName}, thank you for your ${review.rating}-star review. ` +
-      `We truly appreciate your feedback and are glad you shared your experience with us. ` +
-      `If you need anything else, our team is here to help. — (${tone} tone)`
+    const generatedReply = await GoogleAiService.generateReviewReply({
+      organizationId,
+      reviewerName: review.reviewerName,
+      rating: review.rating,
+      reviewText: review.reviewText,
+      tone: settings.defaultAiTone,
+      language: settings.aiLanguage,
+      instructions: settings.aiInstructions,
+    })
 
     const record = await AiReplyRepository.create({
       organizationId,
       reviewId: review._id,
       provider: 'google',
-      prompt: `Generate a ${tone} reply for: ${review.reviewText}`,
+      prompt: `Generate a ${settings.defaultAiTone} reply`,
       generatedReply,
       editedReply: null,
       approved: false,
@@ -132,6 +189,10 @@ export class AIReplyService {
     if (!review.replyText) {
       review.replyText = generatedReply
       review.status = settings.reviewApprovalRequired ? 'pending' : 'approved'
+      review.metadata = {
+        ...(review.metadata || {}),
+        responseMode: 'AI_ASSISTED',
+      }
     }
     await review.save()
 
@@ -156,6 +217,10 @@ export class AIReplyService {
     review.replyText = replyText
     review.aiGenerated = true
     if (review.status === 'pending') review.status = 'approved'
+    review.metadata = {
+      ...(review.metadata || {}),
+      responseMode: 'MANUAL',
+    }
     await review.save()
 
     const latest = await AiReplyRepository.latestForReview(organizationId, reviewId)
@@ -187,22 +252,15 @@ export class AIReplyService {
         throw new AppError('Add a reply before posting to Google', 400)
       }
 
-      const account = await MarketingRepository.findProviderWithTokens(organizationId, 'google')
-      if (!account?.isConnected || !account.accessToken) {
-        throw new AppError('Google Business is not connected', 400)
+      const safety = GoogleAiService.validateReplySafety(review.replyText)
+      if (!safety.safe) {
+        throw new AppError(
+          safety.reason || 'Reply failed safety validation',
+          400,
+        )
       }
 
-      await GoogleBusinessClient.postReply(
-        account.accessToken,
-        account.locationId || '',
-        review.googleReviewId,
-        review.replyText,
-      )
-
-      review.hasReply = true
-      review.replyDate = new Date()
-      review.status = 'posted'
-      await review.save({ session })
+      await AutomationService.publishReviewReply(organizationId, review)
 
       const latest = await AiReplyRepository.latestForReview(organizationId, reviewId)
       if (latest) {

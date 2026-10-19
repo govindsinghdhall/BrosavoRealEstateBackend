@@ -6,7 +6,9 @@ export function parsePagination(req: Request) {
   const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20))
   const search = typeof req.query.search === 'string' ? req.query.search : undefined
   const sortBy = typeof req.query.sortBy === 'string' ? req.query.sortBy : 'createdAt'
-  const sortOrder: 'asc' | 'desc' = req.query.sortOrder === 'asc' ? 'asc' : 'desc'
+  const sortOrder: 'asc' | 'desc' = (req.query.sortOrder === 'asc' || req.query.sortOrder === 'desc') 
+    ? req.query.sortOrder 
+    : 'desc'
   return { page, limit, search, sortBy, sortOrder }
 }
 

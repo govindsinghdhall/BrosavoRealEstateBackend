@@ -143,7 +143,7 @@ export function serializePublicProperty(property: IProperty) {
     virtualTourUrl: property.virtualTourUrl,
     brochureUrl: property.brochureUrl,
     amenities: property.amenities ?? [],
-    images: [],
+    images: property.images, // <-- Fixed: Use actual images from property
   }
 }
 

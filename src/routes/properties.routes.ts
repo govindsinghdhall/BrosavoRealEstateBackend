@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import * as propertiesController from '../controllers/properties.controller'
 import { authenticate, requirePermission } from '../middleware/auth'
+import { upload } from '../middleware/upload'
 import { PERMISSIONS } from '../constants/permissions'
 
 const router = Router()
@@ -26,6 +27,7 @@ router.post(
 router.post(
   '/:id/images/batch',
   requirePermission(PERMISSIONS.PROPERTIES_UPDATE),
+  upload.array('images', 20),
   propertiesController.uploadPropertyImagesBatch,
 )
 router.get(

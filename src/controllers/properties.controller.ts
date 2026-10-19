@@ -13,6 +13,16 @@ import { listPropertiesWithOwners } from '../services/leadProperty.service'
 import { buildPaginationMeta, success, successPaginated } from '../utils/response'
 import { AppError } from '../utils/errors'
 
+import {
+  uploadPropertyImagesToR2,
+  deletePropertyImagesFromR2,
+} from '../services/cloudflareR2.service.js'
+
+import {
+  validatePropertyImages,
+  type PropertyImageUpload,
+} from '../utils/propertyImages.utils.js'
+
 function paramId(value: string | string[]): number {
   const raw = Array.isArray(value) ? value[0] : value
   const id = Number(raw)
@@ -216,15 +226,98 @@ export async function listPropertyOwners(req: Request, res: Response, next: Next
   }
 }
 
-export async function uploadPropertyImagesBatch(req: Request, res: Response, next: NextFunction) {
+
+export async function uploadPropertyImagesBatch(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  let uploadedImages: Awaited<
+    ReturnType<typeof uploadPropertyImagesToR2>
+  > = []
+
   try {
     if (!req.auth) {
-      return res.status(401).json({ success: false, message: 'Unauthorized' })
+      return res.status(401).json({
+        success: false,
+        message: 'Unauthorized',
+      })
     }
 
-    await getPropertyById(paramId(req.params.id), req.auth.organizationId)
-    return success(res, [], 'Image upload is not configured yet', 201)
+    const propertyId = paramId(req.params.id)
+    const organizationId = String(req.auth.organizationId)
+
+    // Existing service must enforce organization ownership.
+    const property = await getPropertyById(
+      propertyId,
+      req.auth.organizationId,
+    )
+
+    const files = (req.files ?? []) as Express.Multer.File[]
+
+    validatePropertyImages(files as PropertyImageUpload[])
+
+    const setPrimary =
+      req.body?.setPrimary === true ||
+      req.body?.setPrimary === 'true'
+
+    const existingImages = property.images ?? []
+
+    // Keep the current primary image unless explicitly replaced,
+    // or make the first image primary when the property has no images.
+    const makeFirstPrimary =
+      setPrimary || existingImages.length === 0
+
+    uploadedImages = await uploadPropertyImagesToR2(
+      files as PropertyImageUpload[],
+      organizationId,
+      String(property._id),
+      makeFirstPrimary,
+    )
+
+    // Properly handle primary image logic
+    const newImages = uploadedImages.map((image, index) => ({
+      ...image,
+      isPrimary: makeFirstPrimary ? index === 0 : image.isPrimary,
+    }))
+
+    if (makeFirstPrimary && existingImages.length > 0) {
+      // Set all existing images to non-primary
+      for (const image of existingImages) {
+        image.isPrimary = false
+      }
+    }
+
+    property.images = [...existingImages, ...newImages]
+
+    await property.save()
+
+    return res.status(201).json({
+      success: true,
+      message: 'Property images uploaded successfully',
+      data: {
+        propertyId: String(property._id),
+        images: newImages,
+        totalImages: property.images.length,
+      },
+    })
   } catch (error) {
+    // If the database save failed, remove the objects from R2.
+    // Do not hide the original error if cleanup also fails.
+    if (uploadedImages.length) {
+      try {
+        await deletePropertyImagesFromR2(
+          uploadedImages.map(image => image.key),
+        )
+      } catch (cleanupError) {
+        console.error(
+          'Failed to clean up property images after database error:',
+          cleanupError,
+        )
+      }
+    }
+
     next(error)
   }
 }
+

@@ -1,5 +1,16 @@
+
 import { Schema, model, type Document } from 'mongoose'
 import { applyAutoIncrement } from '../utils/autoIncrement'
+
+export interface IPropertyImage {
+  key: string
+  url: string
+  filename: string
+  mimetype: string
+  size: number
+  isPrimary: boolean
+  uploadedAt: Date
+}
 
 export interface IProperty extends Document<number> {
   organizationId: number
@@ -38,6 +49,7 @@ export interface IProperty extends Document<number> {
   virtualTourUrl: string | null
   brochureUrl: string | null
   amenities: string[]
+  images: IPropertyImage[]
   isActive: boolean
   ownerName: string | null
   ownerPhone: string | null
@@ -49,15 +61,57 @@ export interface IProperty extends Document<number> {
   updatedAt: Date
 }
 
+const propertyImageSchema = new Schema<IPropertyImage>(
+  {
+    key: { type: String, required: true },
+    url: { type: String, required: true },
+    filename: { type: String, required: true },
+    mimetype: { type: String, required: true },
+    size: { type: Number, required: true, min: 0 },
+    isPrimary: { type: Boolean, default: false },
+    uploadedAt: { type: Date, default: Date.now },
+  },
+  {
+    _id: false,
+  },
+)
+
 const propertySchema = new Schema<IProperty>(
   {
     _id: { type: Number },
-    organizationId: { type: Number, ref: 'Organization', required: true, index: true },
+
+    organizationId: {
+      type: Number,
+      ref: 'Organization',
+      required: true,
+      index: true,
+    },
+
     title: { type: String, required: true, trim: true },
     description: { type: String, default: null },
-    listingCategory: { type: String, default: 'BUY', uppercase: true, trim: true },
-    type: { type: String, required: true, uppercase: true, trim: true },
-    status: { type: String, default: 'AVAILABLE', uppercase: true, trim: true, index: true },
+
+    listingCategory: {
+      type: String,
+      default: 'BUY',
+      uppercase: true,
+      trim: true,
+    },
+
+    type: {
+      type: String,
+      required: true,
+      uppercase: true,
+      trim: true,
+    },
+
+    status: {
+      type: String,
+      default: 'AVAILABLE',
+      uppercase: true,
+      trim: true,
+      index: true,
+    },
+
     price: { type: Number, required: true, min: 0 },
     area: { type: Number, required: true, min: 0 },
     carpetArea: { type: Number, default: null },
@@ -65,6 +119,7 @@ const propertySchema = new Schema<IProperty>(
     superArea: { type: Number, default: null },
     bedrooms: { type: Number, default: null },
     bathrooms: { type: Number, default: null },
+
     address: { type: String, required: true, trim: true },
     city: { type: String, required: true, trim: true, index: true },
     state: { type: String, required: true, trim: true },
@@ -72,31 +127,73 @@ const propertySchema = new Schema<IProperty>(
     locality: { type: String, default: '', trim: true },
     sector: { type: String, default: null, trim: true },
     landmark: { type: String, default: null, trim: true },
+
     latitude: { type: Number, default: null },
     longitude: { type: Number, default: null },
+
     builderName: { type: String, default: null, trim: true },
-    propertyAge: { type: String, default: null, uppercase: true, trim: true },
-    furnishing: { type: String, default: null, uppercase: true, trim: true },
-    facing: { type: String, default: null, uppercase: true, trim: true },
-    possessionStatus: { type: String, default: null, uppercase: true, trim: true },
+    propertyAge: {
+      type: String,
+      default: null,
+      uppercase: true,
+      trim: true,
+    },
+    furnishing: {
+      type: String,
+      default: null,
+      uppercase: true,
+      trim: true,
+    },
+    facing: {
+      type: String,
+      default: null,
+      uppercase: true,
+      trim: true,
+    },
+    possessionStatus: {
+      type: String,
+      default: null,
+      uppercase: true,
+      trim: true,
+    },
     possessionDate: { type: String, default: null },
     roiPotential: { type: Number, default: null },
+
     isVerified: { type: Boolean, default: true },
     hasRera: { type: Boolean, default: false },
     reraId: { type: String, default: null, trim: true },
+
     videoTourUrl: { type: String, default: null },
     virtualTourUrl: { type: String, default: null },
     brochureUrl: { type: String, default: null },
+
     amenities: { type: [String], default: [] },
+
+    // Property photos stored in Cloudflare R2.
+    // MongoDB stores metadata and object keys, not image binaries.
+    images: {
+      type: [propertyImageSchema],
+      default: [],
+    },
+
     isActive: { type: Boolean, default: true },
+
     ownerName: { type: String, default: null, trim: true },
     ownerPhone: { type: String, default: null, trim: true },
-    ownerEmail: { type: String, default: null, lowercase: true, trim: true },
+    ownerEmail: {
+      type: String,
+      default: null,
+      lowercase: true,
+      trim: true,
+    },
     ownerAddress: { type: String, default: null, trim: true },
     ownerNotes: { type: String, default: null, trim: true },
+
     deletedAt: { type: Date, default: null },
   },
-  { timestamps: true },
+  {
+    timestamps: true,
+  },
 )
 
 applyAutoIncrement(propertySchema, 'Property')
@@ -105,4 +202,7 @@ propertySchema.index({ organizationId: 1, status: 1 })
 propertySchema.index({ organizationId: 1, type: 1 })
 propertySchema.index({ organizationId: 1, city: 1 })
 
-export const Property = model<IProperty>('Property', propertySchema)
+export const Property = model<IProperty>(
+  'Property',
+  propertySchema,
+)

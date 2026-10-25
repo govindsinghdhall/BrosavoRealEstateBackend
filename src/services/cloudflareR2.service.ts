@@ -11,6 +11,7 @@ import {
   type PropertyImageMetadata,
   type PropertyImageUpload,
 } from '../utils/propertyImages.utils.js'
+import { compressPropertyImage } from '../utils/imageCompression.utils.js'
 
 function requiredEnv(name: string): string {
   const value = process.env[name]
@@ -43,6 +44,9 @@ export async function uploadPropertyImageToR2(
   propertyId: string,
   isPrimary = false,
 ): Promise<PropertyImageMetadata> {
+  // Compress the image to ensure it's under 100KB
+  const compressedImage = await compressPropertyImage(file.buffer, file.originalname);
+  
   const key = createPropertyImageKey(
     organizationId,
     propertyId,
@@ -53,8 +57,8 @@ export async function uploadPropertyImageToR2(
     new PutObjectCommand({
       Bucket: bucketName,
       Key: key,
-      Body: file.buffer,
-      ContentType: file.mimetype,
+      Body: compressedImage.buffer,
+      ContentType: `image/${compressedImage.format}`,
       CacheControl: 'public, max-age=31536000, immutable',
     }),
   )
@@ -63,8 +67,8 @@ export async function uploadPropertyImageToR2(
     key,
     url: getPropertyImagePublicUrl(key),
     filename: file.originalname,
-    mimetype: file.mimetype,
-    size: file.size,
+    mimetype: `image/${compressedImage.format}`,
+    size: compressedImage.size,
     isPrimary,
     uploadedAt: new Date(),
   }

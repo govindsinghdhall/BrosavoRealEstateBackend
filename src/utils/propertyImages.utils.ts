@@ -5,6 +5,7 @@ import { AppError } from '../utils/errors'
 
 export const MAX_PROPERTY_IMAGE_SIZE = 10 * 1024 * 1024
 export const MAX_PROPERTY_IMAGES = 20
+export const TARGET_IMAGE_SIZE = 100 * 1024 // 100KB in bytes
 
 export const ALLOWED_PROPERTY_IMAGE_TYPES = [
   'image/jpeg',
@@ -94,4 +95,11 @@ export function getPropertyImagePublicUrl(
     .split('/')
     .map(encodeURIComponent)
     .join('/')}`
+}
+
+/**
+ * Checks if an image needs to be compressed (if it's larger than the target size)
+ */
+export function needsCompression(imageSize: number): boolean {
+  return imageSize > TARGET_IMAGE_SIZE;
 }
